@@ -15,6 +15,7 @@ import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, test as nodeTest } from "node:test";
 import { chromium, expect as baseExpect } from "@playwright/test";
+import * as sdk from "../../vendor/lattice-sdk.js";
 
 const expect = baseExpect.configure({ timeout: 180_000 });
 const walletWeb = process.env.LATTICE_WALLET_WEB && resolve(process.env.LATTICE_WALLET_WEB);
@@ -228,4 +229,33 @@ test("the blog's moderator hides a comment; another reader sees it folded", asyn
   await expect(view).toContainText("one <script> tag");
   await other.close();
   assert.equal(await balance(reader), 0n, "the moderator holds no coins");
+});
+
+test("a write the host takes and then lets go of offers Retry, and Retry lands it", async () => {
+  await page.goto(demo());
+  await expect(widget().locator("h2")).toHaveText("6 comments");
+  // The host answers "pooled" but keeps nothing, as when a reorg or eviction drops it.
+  let dropped = 0;
+  await context.route((url) => url.pathname === "/transactions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    const wire = JSON.parse(route.request().postData()).transaction;
+    const body = { ...wire.body, accountActions: wire.body.accountActions.map((a) => ({ owner: a.owner, delta: BigInt(a.delta) })), nonce: BigInt(wire.body.nonce) };
+    dropped++;
+    await route.fulfill({ json: { transactionCID: sdk.signedTransactionCID(wire.signatures, body), mempoolCount: 1, mempoolBytes: 1 } });
+  });
+  await widget().getByLabel("Comment", { exact: true }).fill("This one the host lets go of.");
+  await approve(widget().getByRole("button", { name: "Post", exact: true }));
+  const mine = comment("the host lets go of");
+  await expect(mine).toHaveClass(/pending/);
+  // Not after 20 minutes: as soon as the host neither holds it nor counts it.
+  await expect(mine.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 90_000 });
+  await expect(mine.locator(".meta")).toHaveAttribute("data-state", "Not saved: it didn't go through");
+  assert.equal(dropped, 1);
+
+  await context.unroute((url) => url.pathname === "/transactions");
+  await context.unrouteAll();
+  await approve(mine.getByRole("button", { name: "Retry" }));
+  await expect(mine).not.toHaveClass(/pending/);
+  await expect(widget().locator("h2")).toHaveText("7 comments");
+  assert.equal(await balance(reader), 0n, "the reader holds no coins");
 });

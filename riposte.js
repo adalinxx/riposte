@@ -17,6 +17,7 @@ import { createRiposte, DEFAULTS } from "./src/index.mjs";
 import * as records from "./src/records.mjs";
 import { accountIcon, shortAccount } from "./src/account.mjs";
 import { ago, count, esc, renderText } from "./widget/text.mjs";
+import { fate } from "./widget/inflight.mjs";
 
 const SPONSOR = "https://lattice-testnet-apps-iad.fly.dev:8650/sponsor";
 const HOME = new URL("./", import.meta.url).href;
@@ -161,6 +162,8 @@ async function mount(element) {
   const view = root.querySelector(".rp");
 
   const PENDING = `riposte.pending.${chain.join("/")}.${page.key}`;
+  // The account's last write, until it lands: a host takes one at a time.
+  const INFLIGHT = `riposte.inflight.${chain.join("/")}`;
   const state = {
     me: await wallet.address().catch(() => null),
     name: store.get("riposte.name", ""),
@@ -174,6 +177,7 @@ async function mount(element) {
     shown: PAGE_SIZE,
     replyTo: null, // "author/id" of the open reply box
     reveal: new Set(), // hidden comments the reader chose to see
+    inflight: store.get(INFLIGHT, null), // { cid, nonce, host, account, chain, at }
     status: "", // the composer's line
     bad: false,
     busy: false,
@@ -237,7 +241,7 @@ async function mount(element) {
     const liked = saving ?? (state.me !== null && c.likes.includes(state.me));
     const likes = c.likes.length + (saving === undefined ? 0 : saving && !c.likes.includes(state.me) ? 1 : !saving && c.likes.includes(state.me) ? -1 : 0);
     const mine = state.me === c.author;
-    const stale = c.pending && Date.now() - c.sentAt > STALE;
+    const stale = c.pending && (c.dropped || Date.now() - c.sentAt > STALE);
     const acts = c.pending
       ? stale
         ? `<div class="acts"><button data-act="retry-send" data-key="${key}">Retry</button><button data-act="discard" data-key="${key}">Discard</button></div>`
@@ -251,7 +255,7 @@ async function mount(element) {
     return `<li class="c${c.pending ? " pending" : ""}${hiddenBy ? " marked" : ""}" id="c-${c.id}">
       <div class="body">
         ${avatar(c.author)}
-        <div class="meta" ${c.pending ? `data-state="${stale ? "Not saved: it may not have gone through" : esc(c.pending)}"` : ""}><span class="name">${nameOf(c)}</span>${mine ? `<span class="you">you</span>` : ""}${c.answers && depth >= DEPTH ? `<span>↪ ${c.answers.missing ? "a deleted comment" : nameOf(c.answers)}</span>` : ""}${c.pending ? "" : `<a href="#c-${c.id}" title="${esc(new Date(c.at).toLocaleString())}" style="color:inherit;text-decoration:none">${esc(ago(c.at))}</a>`}${hiddenBy ? "<span>hidden</span>" : ""}</div>
+        <div class="meta" ${c.pending ? `data-state="${stale ? (c.dropped ? "Not saved: it didn't go through" : "Not saved: it may not have gone through") : esc(c.pending)}"` : ""}><span class="name">${nameOf(c)}</span>${mine ? `<span class="you">you</span>` : ""}${c.answers && depth >= DEPTH ? `<span>↪ ${c.answers.missing ? "a deleted comment" : nameOf(c.answers)}</span>` : ""}${c.pending ? "" : `<a href="#c-${c.id}" title="${esc(new Date(c.at).toLocaleString())}" style="color:inherit;text-decoration:none">${esc(ago(c.at))}</a>`}${hiddenBy ? "<span>hidden</span>" : ""}</div>
         <div class="text">${renderText(c.text)}</div>
         ${acts}
       </div>
@@ -336,8 +340,20 @@ async function mount(element) {
     if (!state.me) return false;
     state.busy = true;
     try {
+      // A host refuses a second write while the account's last still waits.
+      const last = state.inflight?.account === state.me ? await fate(state.inflight) : "landed";
+      if (last === "waiting") {
+        say("Your last change is still saving. Try this once it's in.", true);
+        return false;
+      }
+      if (last === "dropped") lost(state.inflight);
+      settle(null);
       say("Approve it in Selfhold…");
-      await run({ wallet, account: state.me, progress: (text) => say(`${text}…`.replace(/[.…]+…$/, "…")) });
+      const answer = await run({ wallet, account: state.me, progress: (text) => say(`${text}…`.replace(/[.…]+…$/, "…")) });
+      const sent = answer?.sent ?? answer;
+      if (sent?.transactionCID && sent.host && sent.nonce !== undefined) {
+        settle({ cid: sent.transactionCID, nonce: String(sent.nonce), host: sent.host, account: state.me, chain: chain.join("/"), at: Date.now() });
+      }
       say("");
       return true;
     } catch (error) {
@@ -355,13 +371,35 @@ async function mount(element) {
    * Re-reads every few seconds until `done()` holds. Past STALE it stops and
    * says so: a write that hasn't landed by then probably never will.
    */
+  function settle(sent) {
+    state.inflight = sent;
+    store.set(INFLIGHT, sent ?? undefined);
+  }
+  /** `sent` won't land: a comment it carried offers Retry; true if one did. */
+  function lost(sent) {
+    let carried = false;
+    for (const p of state.pending) if (p.cid === sent.cid) carried = p.dropped = true;
+    store.set(PENDING, state.pending.length ? state.pending : undefined);
+    state.likes.clear();
+    return carried;
+  }
   let watching = null;
-  function watch(done, { stuck = "That hasn't gone through after 20 minutes. Try again." } = {}) {
+  function watch(done, { stuck = "That hasn't gone through after 20 minutes. Try again.", dropped = "That didn't go through. Try again." } = {}) {
     const started = Date.now();
+    const sent = state.inflight;
     clearInterval(watching);
     watching = setInterval(async () => {
       await load();
-      if (done()) return clearInterval(watching);
+      if (done()) return (clearInterval(watching), sent === state.inflight && settle(null));
+      // The host let go of it without it landing: nothing will bring it back.
+      const now = sent && sent === state.inflight ? await fate(sent) : "waiting";
+      if (now === "landed") settle(null);
+      if (now === "dropped") {
+        clearInterval(watching);
+        settle(null);
+        if (!lost(sent) && dropped) say(dropped, true);
+        return render();
+      }
       if (Date.now() - started > STALE) {
         clearInterval(watching);
         if (stuck) say(stuck, true);
@@ -401,7 +439,7 @@ async function mount(element) {
     if (!ok) return;
     // Shown at once, as saving, until it is in a block.
     const value = records.parseComment(draft.actions[0].newValue);
-    state.pending.push({ author: state.me, id: draft.id, at: Date.now(), ...value, sentAt: Date.now() });
+    state.pending.push({ author: state.me, id: draft.id, at: Date.now(), ...value, sentAt: Date.now(), cid: state.inflight?.cid });
     store.set(PENDING, state.pending);
     if (reply) state.replyTo = null;
     const box = view.querySelector(`form.compose[data-reply="${reply ?? ""}"]`);
@@ -417,6 +455,8 @@ async function mount(element) {
     const ok = await writing((how) => page.comment({ id: p.id, text: p.text, name: p.name, ...(p.reply && { reply: p.reply }) }, how));
     if (!ok) return;
     p.sentAt = Date.now();
+    p.cid = state.inflight?.cid;
+    delete p.dropped;
     store.set(PENDING, state.pending);
     render();
     watch(() => state.pending.length === 0, { stuck: null });

@@ -105,9 +105,11 @@ const test = (name, body) =>
       error.message += `\n--- widget:\n${(await widget().innerText().catch(() => "")).slice(0, 1500)}`;
       if (reader) error.message += `\n--- the reader on the chain: ${JSON.stringify(await (await fetch(`${keep.node}/api/state/account/${reader}?chainPath=${keep.chain}`, { cache: "no-store" })).json().catch(() => null))}`;
       if (process.env.UI_LOGS) {
-        const { dirname } = await import("node:path");
-        const { cpSync } = await import("node:fs");
-        cpSync(dirname(keepFile), process.env.UI_LOGS, { recursive: true, filter: (f) => !/\/(chains|blocks|volumes)\b/.test(f) || /\.log$/.test(f) });
+        // The node's and the sponsor's logs, to see what became of a write.
+        const { dirname, join } = await import("node:path");
+        const { cpSync, existsSync } = await import("node:fs");
+        const root = dirname(keepFile);
+        for (const part of ["log", "sponsor.log"]) if (existsSync(join(root, part))) cpSync(join(root, part), join(process.env.UI_LOGS, part), { recursive: true });
       }
       if (walletWindow) error.message += `\n--- Selfhold's window:\n${(await walletWindow.locator("body").innerText({ timeout: 2000 }).catch(() => "(closed)")).slice(0, 800)}`;
       throw error;

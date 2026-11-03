@@ -14,7 +14,7 @@ import { writeRequest } from "./wallet.mjs";
 
 /** Where Riposte lives now: its testnet trial chain on the shared app hosts. */
 export const DEFAULTS = {
-  chain: ["Nexus", "testnet", "riposte"],
+  chain: ["Nexus", "testnet", "riposte-bc49ba"],
   nodes: ["https://lattice-testnet-apps-iad.fly.dev", "https://lattice-testnet-apps-ams.fly.dev"],
   // How long a read state is reused before asking for the tip again.
   freshFor: 10_000,

@@ -123,3 +123,12 @@ second reader sees it folded:
   LATTICE=<lattice-node>/.build/debug/lattice LATTICE_WALLET_WEB=<selfhold-wallet>/dist-web \
   node --test widget.test.mjs)
 ```
+
+## Trial
+
+The trial chain is `Nexus/testnet/riposte-bc49ba`, from `chain/spec.json`
+(policy module `bafyreigajyzr5o7ygzhz77jhvymxq3r6s5bgm72wdd4jjzf43iu7djcoae`).
+It was created on the operator's Mac node, which merge-mines it. Its premine
+goes to a test key that is not in this repository. The shared testnet app
+hosts `lattice-testnet-apps-iad` and `-ams` host it. The fee sponsor on iad
+pays Riposte's fees from a float of 100,000 sent from the premine.

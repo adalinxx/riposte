@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Riposte: comments for static sites</title>
+<meta name="description" content="A drop-in comment widget for static blogs. One script tag; no server, no sign-up, no ads, no captcha.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root { color-scheme: light dark; --bg: #fbfaf7; --fg: #1d2127; --muted: #5d6470; --line: #e4e1da; --card: #fff; --accent: #c2410c; --code: #f3f1ec; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #14161a; --fg: #e9e6df; --muted: #a0a6b0; --line: #2b2f36; --card: #1b1e23; --accent: #fb8a4c; --code: #1f2329; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 20px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 750; font-size: 1.1em; color: inherit; text-decoration: none; }
+  .brand img { width: 28px; height: 28px; }
+  nav a { color: var(--muted); text-decoration: none; margin-left: 18px; font-size: .95em; }
+  nav a:hover { color: var(--fg); }
+  .hero { padding: 48px 0 28px; }
+  .hero h1 { font-size: clamp(2em, 5.5vw, 3.2em); line-height: 1.08; letter-spacing: -.02em; margin: 0 0 18px; }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero p { font-size: 1.15em; color: var(--muted); max-width: 640px; margin: 0 0 26px; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 10px 18px; border-radius: 9px; font-weight: 650; text-decoration: none; border: 1px solid var(--line); color: var(--fg); background: var(--card); cursor: pointer; font: inherit; font-weight: 650; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { .btn.primary { color: #1a0f08; } }
+  pre, code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .86em; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; margin: 0; line-height: 1.5; }
+  .snippet { position: relative; margin: 28px 0 8px; }
+  .copy { position: absolute; top: 8px; right: 8px; font-size: .8em; padding: 4px 10px; }
+  section { padding: 36px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 1.5em; letter-spacing: -.01em; margin: 0 0 14px; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 18px; }
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .step b { display: block; margin-bottom: 4px; }
+  .step span { color: var(--muted); font-size: .95em; }
+  .step .num { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: .8em; font-weight: 700; margin-bottom: 8px; }
+  @media (prefers-color-scheme: dark) { .step .num { color: #1a0f08; } }
+  table { width: 100%; border-collapse: collapse; font-size: .95em; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 650; }
+  td.us { font-weight: 600; }
+  .table { overflow-x: auto; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 14px 0 10px; }
+  .tabs button { border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 999px; padding: 4px 14px; cursor: pointer; font: inherit; font-size: .9em; }
+  .tabs button[aria-selected="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .where { color: var(--muted); font-size: .95em; margin: 0 0 10px; }
+  .mod { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 0 6px; }
+  #mod-id.id { font-family: ui-monospace, Menlo, monospace; font-size: .82em; overflow-wrap: anywhere; }
+  .muted { color: var(--muted); }
+  details { border-bottom: 1px solid var(--line); padding: 10px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  details p { color: var(--muted); margin: 8px 0 4px; }
+  .note { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; font-size: .92em; color: var(--muted); margin-top: 18px; }
+  #riposte { margin-top: 10px; }
+  footer { padding: 30px 0 60px; color: var(--muted); font-size: .9em; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="icon.svg" alt="">Riposte</a>
+    <nav><a href="#install">Install</a><a href="demo/">Demo</a><a href="https://github.com/adalinxx/riposte">Source</a></nav>
+  </header>
+
+  <div class="hero">
+    <h1>Comments for static sites.<br><em>No server. No sign-up. No ads.</em></h1>
+    <p>Paste one script tag. Readers post with a passkey and a few seconds of their device's work, so there's no account wall and no captcha. The comments live on a public chain, not on your server or ours.</p>
+    <div class="cta"><a class="btn primary" href="#install">Add it to your site</a><a class="btn" href="demo/">See it on a blog post</a></div>
+    <div class="snippet"><pre id="snippet-top"></pre><button class="btn copy" data-copy="snippet-top">Copy</button></div>
+  </div>
+
+  <section>
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step"><span class="num">1</span><b>Paste a tag</b><span>One <code>&lt;div&gt;</code> and one <code>&lt;script&gt;</code> in your post template. Nothing to host, no database, no API key.</span></div>
+      <div class="step"><span class="num">2</span><b>Readers just write</b><span>Their first comment makes a passkey in <a href="https://wallet.selfhold.app/">Selfhold</a>. The browser does a few seconds of work, which pays for the comment instead of money, a captcha or an email address.</span></div>
+      <div class="step"><span class="num">3</span><b>You moderate by marking</b><span>Hide a comment or block an author on your pages. Nobody but its writer can delete a comment, and readers can still open what you hid.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Compared with what you'd use now</h2>
+    <div class="table"><table>
+      <tr><th></th><th>Riposte</th><th>Disqus</th><th>giscus / utterances</th><th>Self-hosted</th></tr>
+      <tr><th>Reader needs</th><td class="us">Nothing: a passkey is made in place</td><td>An account</td><td>A GitHub account</td><td>Varies</td></tr>
+      <tr><th>Ads and tracking</th><td class="us">No</td><td>Yes, on the free plan</td><td>No</td><td>No</td></tr>
+      <tr><th>You run</th><td class="us">Nothing</td><td>Nothing</td><td>A GitHub repository</td><td>A server and database</td></tr>
+      <tr><th>Against spam</th><td class="us">Work per comment, and your marks</td><td>Filters</td><td>GitHub accounts</td><td>Captchas, filters</td></tr>
+      <tr><th>Who can delete</th><td class="us">Only the writer</td><td>The company</td><td>GitHub, the repository owner</td><td>You</td></tr>
+    </table></div>
+  </section>
+
+  <section id="install">
+    <h2>Install</h2>
+    <p class="where">First, if you want to moderate, get your moderator ID. It goes in the tag, so the widget follows your marks on your pages.</p>
+    <div class="mod"><button class="btn" id="get-id">Get my moderator ID</button><span id="mod-id" class="muted">Skip this to install without a moderator.</span></div>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-site="html" aria-selected="true">Any HTML</button>
+      <button role="tab" data-site="hugo" aria-selected="false">Hugo</button>
+      <button role="tab" data-site="astro" aria-selected="false">Astro</button>
+      <button role="tab" data-site="jekyll" aria-selected="false">Jekyll</button>
+    </div>
+    <p class="where" id="where"></p>
+    <div class="snippet"><pre id="snippet"></pre><button class="btn copy" data-copy="snippet">Copy</button></div>
+    <p class="where">To moderate, open one of your posts, choose <b>Moderator sign-in</b> under the comments, and use the same Selfhold account. <b>Hide</b> and <b>Block author</b> then appear on each comment.</p>
+    <details><summary>Options</summary>
+      <p><code>data-page="…"</code> names the page's thread. By default it's the page's host and path, so <code>https://www.example.com/post/</code> and <code>http://example.com/post</code> share comments. Set your own (a post's slug, say) to keep comments across a domain move.</p>
+      <p><code>data-moderators="id1,id2"</code> follows more than one moderator.</p>
+      <p>The widget uses your page's font, text color and link color. Set <code>--riposte-accent</code> on the element to pick another accent.</p>
+    </details>
+  </section>
+
+  <section>
+    <h2>Questions</h2>
+    <details><summary>What does it cost?</summary><p>Nothing, for you or your readers. Each comment's fee is paid by a fee sponsor in exchange for a few seconds of work from the reader's device. Nobody holds or buys coins.</p></details>
+    <details><summary>Where are the comments kept?</summary><p>On Riposte's chain on <a href="https://lattice.build">Lattice</a>, which any node can serve. The widget reads from public nodes and checks every piece against its hash, so a node can't make up comments. If this site disappeared, the comments would still be there.</p></details>
+    <details><summary>What do you learn about my readers?</summary><p>Nothing. There are no cookies, no analytics and no server of ours. The widget loads from GitHub Pages and reads from Lattice nodes. A reader's account ID is kept in their own browser's storage.</p></details>
+    <details><summary>Can I delete a comment?</summary><p>No, and neither can anyone else except the person who wrote it. You can hide it on your pages, or block its author there. A hidden comment folds away, and a reader can still open it. Other sites decide for themselves whose marks to follow.</p></details>
+    <details><summary>What stops spam?</summary><p>Every comment costs its writer's device some work, so flooding a page is slow and costly. Past that, your marks hide what gets through, and blocking an author hides everything they write on your pages at once.</p></details>
+    <details><summary>Can readers edit a comment?</summary><p>No. A comment is written once and can be deleted by its writer, so a reply always answers what was actually said.</p></details>
+    <div class="note">Riposte runs on Lattice's public testnet for now. Comments made today may be reset before the network launches.</div>
+  </section>
+
+  <section>
+    <h2>Guestbook</h2>
+    <p class="where">This is the widget itself. Say hello.</p>
+    <div id="riposte" data-page="riposte.guestbook"></div>
+  </section>
+
+  <footer>Riposte is open source. <a href="https://github.com/adalinxx/riposte">Source and docs</a> · <a href="demo/">Demo post</a></footer>
+</div>
+
+<script type="module">
+  import { selfhold } from "./vendor/selfhold.mjs";
+
+  // For testing against other hosts: ?node=, ?chain=, ?sponsor=, ?wallet=, ?moderators=.
+  const params = new URLSearchParams(location.search);
+  const guestbook = document.getElementById("riposte");
+  for (const name of ["moderators", "chain", "nodes", "sponsor", "wallet"]) {
+    const value = params.get(name === "nodes" ? "node" : name);
+    if (value) guestbook.dataset[name] = value;
+  }
+  const SCRIPT = new URL("riposte.js", location.href.replace(/[?#].*$/, "")).href;
+
+  let moderator = null;
+  let site = "html";
+  const esc = (t) => t.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const tag = (indent = "") => {
+    const attrs = moderator ? ` data-moderators="${moderator}"` : "";
+    return `${indent}<div id="riposte"${attrs}></div>\n${indent}<script type="module" src="${SCRIPT}"${site === "astro" ? " is:inline" : ""}></` + `script>`;
+  };
+  const SITES = {
+    html: ["Put this where comments should appear, after each post's content:", () => tag()],
+    hugo: ["Save as <code>layouts/partials/comments.html</code>, then add <code>{{ partial \"comments.html\" . }}</code> after <code>{{ .Content }}</code> in <code>layouts/_default/single.html</code>:", () => tag()],
+    astro: ["Save as <code>src/components/Comments.astro</code> and use <code>&lt;Comments /&gt;</code> in your post layout. <code>is:inline</code> keeps Astro from bundling the script:", () => tag()],
+    jekyll: ["Save as <code>_includes/comments.html</code>, then add <code>{% include comments.html %}</code> after <code>{{ content }}</code> in <code>_layouts/post.html</code>:", () => tag()],
+  };
+  function draw() {
+    document.getElementById("where").innerHTML = SITES[site][0];
+    document.getElementById("snippet").innerHTML = esc(SITES[site][1]());
+    const keep = site;
+    site = "html";
+    document.getElementById("snippet-top").innerHTML = esc(tag());
+    site = keep;
+  }
+  draw();
+
+  document.querySelector(".tabs").addEventListener("click", (event) => {
+    const tab = event.target.closest("[data-site]");
+    if (!tab) return;
+    site = tab.dataset.site;
+    for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", String(b === tab));
+    draw();
+  });
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-copy]");
+    if (!button) return;
+    await navigator.clipboard.writeText(document.getElementById(button.dataset.copy).textContent).catch(() => {});
+    button.textContent = "Copied";
+    setTimeout(() => (button.textContent = "Copy"), 1500);
+  });
+
+  const wallet = selfhold({ use: "window", ...(params.get("wallet") && { wallet: params.get("wallet") }) });
+  const showId = (id) => {
+    moderator = id;
+    const line = document.getElementById("mod-id");
+    line.textContent = id ? `Your moderator ID: ${id}` : "Skip this to install without a moderator.";
+    line.classList.toggle("id", Boolean(id));
+    document.getElementById("get-id").textContent = id ? "Use another account" : "Get my moderator ID";
+    draw();
+  };
+  wallet.address().then((id) => id && showId(id)).catch(() => {});
+  document.getElementById("get-id").addEventListener("click", async () => {
+    try {
+      if (moderator) await wallet.disconnect();
+      showId(await wallet.connect());
+    } catch (error) {
+      document.getElementById("mod-id").textContent = error?.code === "PopupBlocked" ? "Your browser blocked Selfhold's window. Allow pop-ups for this site, then try again." : String(error?.message ?? error);
+    }
+  });
+
+  await import("./riposte.js");
+</script>
+</body>
+</html>

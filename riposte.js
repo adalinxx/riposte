@@ -81,7 +81,7 @@ form.reply { margin: 8px 0 4px; }
 
 const DEPTH = 4; // replies deeper than this sit at this depth
 const PAGE_SIZE = 50; // top-level comments shown before "Show more"
-const STALE = 10 * 60_000; // a write not read back by then probably didn't go through
+const STALE = 20 * 60_000; // a write not read back by then probably didn't go through
 
 /** Reads and writes localStorage without failing where it's blocked. */
 const store = {
@@ -271,7 +271,7 @@ async function mount(element) {
   };
 
   function threads() {
-    const all = [...state.comments, ...state.pending.map((p) => ({ ...p, likes: [], pending: p.state ?? "Saving… about a minute" }))];
+    const all = [...state.comments, ...state.pending.map((p) => ({ ...p, likes: [], pending: p.state ?? "Saving… this takes a few minutes" }))];
     const top = records.tree(all);
     const score = (c) => (c.missing ? 0 : c.likes.length) + (c.replies?.length ?? 0) * 0.5;
     const time = (c) => (c.missing ? c.replies[0]?.id : c.id) ?? "";
@@ -356,7 +356,7 @@ async function mount(element) {
    * says so: a write that hasn't landed by then probably never will.
    */
   let watching = null;
-  function watch(done, { stuck = "That hasn't gone through after 10 minutes. Try again." } = {}) {
+  function watch(done, { stuck = "That hasn't gone through after 20 minutes. Try again." } = {}) {
     const started = Date.now();
     clearInterval(watching);
     watching = setInterval(async () => {
@@ -367,7 +367,7 @@ async function mount(element) {
         if (stuck) say(stuck, true);
         render();
       }
-    }, 4000);
+    }, 6000);
   }
   const find = (key) => state.comments?.find((c) => keyOf(c) === key);
   const refOf = (key) => {
@@ -483,7 +483,7 @@ async function mount(element) {
     if (act === "delete") {
       if (!confirmInline(button, "Delete?")) return;
       if (await writing((how) => page.remove(to.id, how))) {
-        say("Deleting… about a minute.");
+        say("Deleting… this takes a few minutes.");
         watch(() => !find(key));
       }
     }

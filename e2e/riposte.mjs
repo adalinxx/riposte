@@ -268,7 +268,7 @@ async function keep(page) {
       response.writeHead(404).end();
     }
   }).listen(port, "127.0.0.1");
-  const query = `node=${encodeURIComponent(node)}&chain=${RIPOSTE.join("/")}&sponsor=${encodeURIComponent(sponsorURL)}&moderators=${mod.address}`;
+  const query = `node=${encodeURIComponent(node)}&chain=${RIPOSTE.join("/")}&sponsor=${encodeURIComponent(sponsorURL)}&moderators=${mod.address}&page=${encodeURIComponent(r.pageName("https://blog.example.com/posts/hello-world/"))}`;
   writeFileSync(`${root}/keep.json`, JSON.stringify({ demo: `http://127.0.0.1:${port}/demo/?${query}`, node, chain: RIPOSTE.join("/"), sponsor: sponsorURL, alice: alice.address, bob: bob.address, mod: mod.address }));
   console.log(`KEEP ${root}/keep.json`);
   console.log(`demo: http://127.0.0.1:${port}/demo/?${query}`);
@@ -276,6 +276,17 @@ async function keep(page) {
 }
 
 let sponsor, sponsorChild;
+function stop() {
+  sponsorChild?.kill();
+  try {
+    lattice("mine", "stop");
+  } catch {}
+  try {
+    lattice("down");
+  } catch {}
+}
+// Stopped from outside (E2E_KEEP, or a test that ran this): leave nothing running.
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => (stop(), process.exit(130)));
 try {
   lattice("init");
   configure((topology) => {
@@ -374,11 +385,5 @@ try {
   console.log("e2e passed");
   if (process.env.E2E_KEEP) await keep(page);
 } finally {
-  sponsorChild?.kill();
-  try {
-    lattice("mine", "stop");
-  } catch {}
-  try {
-    lattice("down");
-  } catch {}
+  stop();
 }

@@ -70,9 +70,9 @@ export function createRiposte(options) {
       /** What `moderators` hide here: `{ comments: Set<"author/id">, accounts: Set }`. */
       hidden: async (moderators, options) => records.hidden(await state(options), key, moderators),
 
-      /** Comments `{ text, name?, reply? }` as the wallet's account: `{ id, sent }`. */
+      /** Comments `{ text, name?, reply?, id? }` as the wallet's account: `{ id, sent }`. */
       comment: async (draft, how) => {
-        const write = records.comment(key, await signer(how), draft);
+        const write = records.comment(key, await signer(how), draft, draft.id ? { id: draft.id } : undefined);
         return { id: write.id, sent: await send(write, how) };
       },
       remove: async (id, how) => send(await records.remove(await state({ fresh: true }), key, await signer(how), id), how),

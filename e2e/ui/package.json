@@ -1,0 +1,11 @@
+{
+  "name": "riposte-ui-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 widget.test.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.48.2"
+  }
+}

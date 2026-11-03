@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notes on running a static blog · Riposte demo</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fdfcf9; --fg: #1f2328; --link: #b4441c; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #16181c; --fg: #e6e3dc; --link: #f0915f; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.65 Georgia, "Iowan Old Style", serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 48px 20px 80px; }
+  a { color: var(--link); }
+  h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 .2em; }
+  .by { opacity: .65; font-size: .9em; margin: 0 0 2em; }
+  hr { border: 0; border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent); margin: 3em 0 2em; }
+  #riposte { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Notes on running a static blog</h1>
+  <p class="by">A demo post · <a href="../">Riposte</a></p>
+  <p>Static sites are wonderful until someone wants to reply. Then the choices are a comment service that shows ads and follows your readers around, a widget that makes them sign in with a code-hosting account, or a server of your own that fills up with spam.</p>
+  <p>The comments below live on a public chain instead. There is no server of mine behind them and no account to make: a reader's browser does a few seconds of work, and a passkey signs what they wrote. Nobody can delete a comment but the person who wrote it. I can hide comments on my own pages, and anyone can still see that I did.</p>
+  <hr>
+  <div id="riposte"></div>
+</main>
+<script type="module">
+  // The demo takes its chain, hosts, fee sponsor and moderators from its address, for testing.
+  const params = new URLSearchParams(location.search);
+  const element = document.getElementById("riposte");
+  for (const name of ["page", "moderators", "chain", "nodes", "sponsor", "wallet"]) {
+    const value = params.get(name === "nodes" ? "node" : name);
+    if (value) element.dataset[name] = value;
+  }
+  element.dataset.page ??= "riposte-demo";
+  await import("../riposte.js");
+</script>
+</body>
+</html>

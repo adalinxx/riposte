@@ -53,3 +53,24 @@ export function ago(at, now = Date.now()) {
 
 /** "1 comment", "2 comments". */
 export const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** The amounts the Tip control offers, in coins. */
+export const TIP_AMOUNTS = [1, 5, 10, 25];
+
+/** What a comment was tipped, `{ count, total }` (total a BigInt): "17 coins in 2 tips", or "" for none. */
+export function tipsLabel({ count: n, total }) {
+  if (!n) return "";
+  return n === 1 ? `Tipped ${count(Number(total), "coin")}` : `${count(Number(total), "coin")} in ${n} tips`;
+}
+
+/**
+ * Whether a reader holding `balance` coins (a BigInt, or null while it's
+ * read) can tip `amount`, and what to tell them: `{ ok, text }`. Tips are
+ * paid from coins only; the fee is paid as for a comment.
+ */
+export function tipCheck(amount, balance) {
+  if (balance === null || balance === undefined) return { ok: false, text: "Checking your balance…" };
+  const want = BigInt(amount);
+  if (balance >= want) return { ok: true, text: `Paid from your balance of ${count(Number(balance), "coin")}. The author gets all ${want}; the fee is paid like a comment's.` };
+  return { ok: false, text: `You hold ${count(Number(balance), "coin")}, and a tip of ${want} needs ${want}. Tips are paid in coins.` };
+}

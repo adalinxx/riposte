@@ -4,7 +4,9 @@
 //   <script type="module" src="https://adalinxx.github.io/riposte/riposte.js"></script>
 //
 // The element may say:
-//   data-page        a name for the page that outlives its address (default: its host and path)
+//   data-page        a name for the page on this site that outlives its path (default: its host and path)
+//   data-url         show another address's thread, as an embed there would (the discuss page)
+//   data-mute        let a signed-in reader mute authors for themselves (the discuss page)
 //   data-moderators  account IDs, comma-separated, whose hide/block marks this page follows
 //   data-chain, data-nodes, data-sponsor, data-wallet   another chain, hosts, fee sponsor or Selfhold
 //
@@ -16,7 +18,7 @@ import { selfhold } from "./vendor/selfhold.mjs";
 import { createRiposte, DEFAULTS } from "./src/index.mjs";
 import * as records from "./src/records.mjs";
 import { accountIcon, shortAccount } from "./src/account.mjs";
-import { ago, count, esc, renderText } from "./widget/text.mjs";
+import { TIP_AMOUNTS, ago, count, esc, renderText, tipCheck, tipsLabel } from "./widget/text.mjs";
 import { fate } from "./widget/inflight.mjs";
 
 const SPONSOR = "https://lattice-testnet-apps-iad.fly.dev:8650/sponsor";
@@ -68,6 +70,15 @@ li.c { margin: 0 0 14px; }
 .acts button { background: none; border: 0; padding: 0; color: var(--muted); }
 .acts button:hover, .link:hover { color: inherit; }
 .acts button[aria-pressed="true"] { color: var(--accent); font-weight: 600; }
+.acts .tipbadge { color: var(--accent); font-weight: 650; }
+li.c.tipped > .body { border-left: 3px solid var(--accent); border-radius: 8px; padding: 6px 8px 6px 7px; margin-left: -10px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: 0 1px 6px color-mix(in srgb, var(--accent) 18%, transparent); }
+.tipped-by { font-size: .85em; color: var(--accent); font-weight: 650; }
+.tipper { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 2px; font-size: .88em; }
+.tipper .amount { border: 1px solid var(--line); background: none; border-radius: 999px; padding: 2px 10px; }
+.tipper .amount[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 650; }
+.tipper button.post { margin-left: 0; padding: 3px 12px; }
+.tipper .note { flex-basis: 100%; margin: 2px 0 0; }
 .pending { opacity: .7; }
 .pending .meta::after { content: attr(data-state); font-style: italic; }
 .gone > .body .text, .hidden-note { color: var(--muted); font-style: italic; }
@@ -104,6 +115,7 @@ const store = {
 
 /** What went wrong with a write, for a person. */
 function walletMessage(error) {
+  if (error?.code === "NotEnoughCoins") return String(error.message);
   if (error?.code === "NeedsCoins") {
     const why = {
       down: "The fee sponsor isn't answering right now, so this device's work can't pay for the comment.",
@@ -150,8 +162,9 @@ async function mount(element) {
   const nodes = data.nodes ? list(data.nodes) : DEFAULTS.nodes;
   const sponsor = data.sponsor ?? SPONSOR;
   const moderators = list(data.moderators).filter(records.isAddress);
+  const mute = data.mute !== undefined;
   const riposte = createRiposte({ sdk, chain, nodes });
-  const page = await riposte.page(data.page ? { name: data.page } : location.href);
+  const page = await riposte.page(data.url ? data.url : data.page ? { name: data.page, site: location.host } : location.href);
   const wallet = selfhold({ use: "window", ...(data.wallet && { wallet: data.wallet }), hosts: () => nodes, sponsor: () => sponsor });
 
   const root = element.attachShadow({ mode: "open" });
@@ -169,6 +182,11 @@ async function mount(element) {
     name: store.get("riposte.name", ""),
     comments: null, // null while loading
     hidden: { comments: new Set(), accounts: new Set() },
+    muted: new Set(), // authors this reader muted, where data-mute lets them
+    tipFor: null, // "author/id" of the open Tip control
+    tipAmount: TIP_AMOUNTS[0],
+    balance: null, // the reader's coins, read when the Tip control opens
+    tipping: new Map(), // "author/id" → the total that shows a sent tip landed
     error: null,
     // Comments sent from here and not yet read back; after STALE they offer Retry.
     pending: store.get(PENDING, []).filter((p) => Date.now() - p.sentAt < 86_400_000),
@@ -187,9 +205,11 @@ async function mount(element) {
 
   async function load() {
     try {
-      const [comments, hidden] = await Promise.all([page.comments({ fresh: true }), page.hidden(moderators)]);
+      const me = state.me;
+      const [comments, hidden, mine] = await Promise.all([page.comments({ fresh: true }), page.hidden(moderators), mute && me ? page.hidden([me]) : null]);
       state.comments = comments;
       state.hidden = hidden;
+      state.muted = mine?.accounts ?? new Set();
       state.error = null;
       const landed = new Set(comments.map(keyOf));
       state.pending = state.pending.filter((p) => !landed.has(keyOf(p)));
@@ -198,6 +218,7 @@ async function mount(element) {
         const c = comments.find((x) => keyOf(x) === key);
         if (c && c.likes.includes(state.me) === on) state.likes.delete(key);
       }
+      for (const [key, total] of state.tipping) if ((comments.find((x) => keyOf(x) === key)?.tips.total ?? 0n) >= total) state.tipping.delete(key);
     } catch (error) {
       state.error = error;
     }
@@ -233,15 +254,18 @@ async function mount(element) {
       return `<li class="c gone"><div class="body"><span class="avatar"></span><p class="text">This comment was deleted.</p></div>${children(c, depth)}</li>`;
     }
     const key = keyOf(c);
-    const hiddenBy = state.hidden.comments.has(key) || state.hidden.accounts.has(c.author);
-    if (hiddenBy && !isMod() && !state.reveal.has(key)) {
-      return `<li class="c"><p class="hidden-note">Hidden by the site's moderators. <button class="link" data-act="reveal" data-key="${key}">Show</button></p>${children(c, depth)}</li>`;
+    const muted = state.muted.has(c.author);
+    const hiddenBy = state.hidden.comments.has(key) || state.hidden.accounts.has(c.author) || muted;
+    if (hiddenBy && (muted || !isMod()) && !state.reveal.has(key)) {
+      return `<li class="c"><p class="hidden-note">${muted ? "You muted this author." : "Hidden by the site's moderators."} <button class="link" data-act="reveal" data-key="${key}">Show</button></p>${children(c, depth)}</li>`;
     }
     const saving = state.likes.get(key);
     const liked = saving ?? (state.me !== null && c.likes.includes(state.me));
     const likes = c.likes.length + (saving === undefined ? 0 : saving && !c.likes.includes(state.me) ? 1 : !saving && c.likes.includes(state.me) ? -1 : 0);
     const mine = state.me === c.author;
     const stale = c.pending && (c.dropped || Date.now() - c.sentAt > STALE);
+    const tips = c.tips ?? { count: 0, total: 0n };
+    const tipSent = state.tipping.has(key);
     const acts = c.pending
       ? stale
         ? `<div class="acts"><button data-act="retry-send" data-key="${key}">Retry</button><button data-act="discard" data-key="${key}">Discard</button></div>`
@@ -249,10 +273,14 @@ async function mount(element) {
       : `<div class="acts">
           <button data-act="reply" data-key="${key}">Reply</button>
           <button data-act="like" data-key="${key}" aria-pressed="${liked}" aria-label="${liked ? "Unlike" : "Like"}">♥ ${likes || ""}</button>
+          ${mine ? "" : `<button data-act="tip" data-key="${key}" aria-expanded="${state.tipFor === key}">${tipSent ? "Tip sending…" : "Tip"}</button>`}
+          ${tips.count ? `<span class="tipbadge">★ ${esc(tipsLabel(tips))}</span>` : ""}
           ${mine ? `<button data-act="delete" data-key="${key}">Delete</button>` : ""}
           ${isMod() && !mine ? `<button data-act="hide" data-key="${key}">${state.hidden.comments.has(key) ? "Unhide" : "Hide"}</button><button data-act="block" data-key="${key}">${state.hidden.accounts.has(c.author) ? "Unblock author" : "Block author"}</button>` : ""}
-        </div>`;
-    return `<li class="c${c.pending ? " pending" : ""}${hiddenBy ? " marked" : ""}" id="c-${c.id}">
+          ${mute && state.me && !mine ? `<button data-act="mute" data-key="${key}">${muted ? "Unmute author" : "Mute author"}</button>` : ""}
+        </div>
+        ${state.tipFor === key ? tipper(key) : ""}`;
+    return `<li class="c${c.pending ? " pending" : ""}${hiddenBy ? " marked" : ""}${tips.count ? " tipped" : ""}" id="c-${c.id}">
       <div class="body">
         ${avatar(c.author)}
         <div class="meta" ${c.pending ? `data-state="${stale ? (c.dropped ? "Not saved: it didn't go through" : "Not saved: it may not have gone through") : esc(c.pending)}"` : ""}><span class="name">${nameOf(c)}</span>${mine ? `<span class="you">you</span>` : ""}${c.answers && depth >= DEPTH ? `<span>↪ ${c.answers.missing ? "a deleted comment" : nameOf(c.answers)}</span>` : ""}${c.pending ? "" : `<a href="#c-${c.id}" title="${esc(new Date(c.at).toLocaleString())}" style="color:inherit;text-decoration:none">${esc(ago(c.at))}</a>`}${hiddenBy ? "<span>hidden</span>" : ""}</div>
@@ -262,6 +290,18 @@ async function mount(element) {
       ${state.replyTo === key ? composer({ reply: key }) : ""}
       ${children(c, depth)}
     </li>`;
+  }
+
+  /** The Tip control: a few amounts, and whether the reader's coins cover the one chosen. */
+  function tipper(key) {
+    const check = tipCheck(state.tipAmount, state.balance);
+    return `<div class="tipper" role="group" aria-label="Tip the author">
+      <span>Tip the author</span>
+      ${TIP_AMOUNTS.map((n) => `<button class="amount" data-act="tip-amount" data-key="${key}" data-amount="${n}" aria-pressed="${state.tipAmount === n}">${n}</button>`).join("")}
+      <button class="post" data-act="tip-send" data-key="${key}" ${check.ok && !state.busy ? "" : "disabled"}>Send ${count(state.tipAmount, "coin")}</button>
+      <button class="cancel" data-act="tip-cancel">Cancel</button>
+      <p class="note" role="status">${esc(check.text)}</p>
+    </div>`;
   }
 
   /** A comment's replies. Past DEPTH they stay at one indent, each saying whom it answers. */
@@ -504,6 +544,8 @@ async function mount(element) {
       return;
     }
     if (act === "cancel") return ((state.replyTo = null), render());
+    if (act === "tip-cancel") return ((state.tipFor = null), render());
+    if (act === "tip-amount") return ((state.tipAmount = Number(button.dataset.amount)), render());
     if (act === "reply") {
       state.replyTo = state.replyTo === key ? null : key;
       render();
@@ -513,6 +555,36 @@ async function mount(element) {
     if (!state.me && !(await signIn())) return;
     if (act === "retry-send") return resend(key);
     const to = refOf(key);
+    if (act === "tip") {
+      if (state.tipFor === key) return ((state.tipFor = null), render());
+      state.tipFor = key;
+      state.balance = null;
+      render();
+      try {
+        state.balance = await riposte.balance(state.me);
+      } catch (error) {
+        say(walletMessage(error), true);
+        state.tipFor = null;
+      }
+      return render();
+    }
+    if (act === "tip-send") {
+      const amount = state.tipAmount;
+      if (!tipCheck(amount, state.balance).ok) return;
+      const total = (find(key)?.tips.total ?? 0n) + BigInt(amount);
+      if (await writing((how) => page.tip(to, amount, how))) {
+        state.tipFor = null;
+        state.tipping.set(key, total);
+        say(`Tipping ${count(amount, "coin")}… this takes a few minutes.`);
+        watch(() => !state.tipping.has(key) && (say(""), true));
+      }
+      return;
+    }
+    if (act === "mute") {
+      const on = !state.muted.has(to.author);
+      if (await writing((how) => page.block(to.author, how, on))) watch(() => state.muted.has(to.author) === on);
+      return;
+    }
     if (act === "like") {
       const on = !(state.likes.get(key) ?? find(key)?.likes.includes(state.me));
       state.likes.set(key, on);

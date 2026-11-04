@@ -4,6 +4,10 @@
 // signs them in with a passkey, the second sends it, and it shows as saving
 // until it lands. They reply, like and delete. Then the blog names them as
 // its moderator: they hide a comment, and a second reader sees it hidden.
+// With no coins the Tip control says so and sends nothing; given coins, they
+// tip a comment from their balance and it is highlighted. The discuss page
+// shows the post's thread from its address alone, and a reader mutes an
+// author there for themselves.
 //
 //   LATTICE=<lattice-node>/.build/debug/lattice \
 //   LATTICE_WALLET_WEB=<selfhold-wallet>/dist-web node --test e2e/ui/widget.test.mjs
@@ -230,6 +234,82 @@ test("the blog's moderator hides a comment; another reader sees it folded", asyn
   assert.equal(await balance(reader), 0n, "the moderator holds no coins");
 });
 
+/** Sends `amount` coins to `to` from the sponsor's key, which holds the chain's rewards. */
+async function fund(to, amount) {
+  const sdk = await import("../../vendor/lattice-sdk.js");
+  const key = JSON.parse(readFileSync(keep.sponsorKey, "utf8"));
+  const chainPath = keep.chain.split("/");
+  const state = await (await fetch(`${keep.node}/api/state/account/${key.address}?chainPath=${keep.chain}`, { cache: "no-store" })).json();
+  const body = {
+    accountActions: [{ owner: key.address, delta: -(amount + 1n) }, { owner: to, delta: amount }],
+    actions: [], depositActions: [], receiptActions: [], withdrawalActions: [],
+    signers: [key.address], nonce: BigInt(state.nonce ?? 0), chainPath,
+  };
+  const { publicKey, signature } = sdk.signTransactionBody(body, Uint8Array.from(Buffer.from(key.privateKey, "hex")));
+  const response = await fetch(`${keep.node}/transactions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sdk.transactionPayload({ [publicKey]: signature }, body)) });
+  assert.ok(response.ok, `funding the reader: ${response.status} ${await response.text()}`);
+}
+
+test("a tip: refused without coins, then paid from the balance and highlighted", async () => {
+  await page.goto(demo());
+  const grace = comment("Does this work with Hugo?");
+  await expect(grace).not.toHaveClass(/tipped/);
+  const open = () => grace.locator(".acts").first().getByRole("button", { name: "Tip", exact: true });
+  const tipper = grace.locator(".tipper");
+  await open().click();
+  await expect(tipper.locator(".note")).toHaveText(/^You hold 0 coins, and a tip of 1 needs 1\. Tips are paid in coins\.$/);
+  await expect(tipper.getByRole("button", { name: "Send 1 coin" })).toBeDisabled();
+  await tipper.getByRole("button", { name: "Cancel" }).click();
+  await expect(tipper).toHaveCount(0);
+
+  const authorBefore = await balance(keep.mod);
+  await fund(reader, 12n);
+  await until("the reader's coins land", async () => (await balance(reader)) === 12n, 180);
+  await open().click();
+  await tipper.getByRole("button", { name: "5", exact: true }).click();
+  await expect(tipper.locator(".note")).toContainText("Paid from your balance of 12 coins");
+  await approve(tipper.getByRole("button", { name: "Send 5 coins" }));
+  await expect(grace).toHaveClass(/tipped/);
+  await expect(grace.locator(".tipbadge").first()).toHaveText("★ Tipped 5 coins");
+  assert.equal(await balance(reader), 7n, "the tip came from the reader's balance; the sponsor paid the fee");
+  assert.equal(await balance(keep.mod), authorBefore + 5n, "the author was paid");
+  // Your own comment has no Tip.
+  await expect(comment("Does it work with Astro too?").getByRole("button", { name: "Tip", exact: true })).toHaveCount(0);
+});
+
+test("the discuss page shows a post's thread from its address, and a reader mutes an author there", async () => {
+  const discuss = `${keep.home}discuss/?url=${encodeURIComponent(keep.post)}&node=${encodeURIComponent(keep.node)}&chain=${keep.chain}&sponsor=${encodeURIComponent(keep.sponsor)}&wallet=${encodeURIComponent(walletPage)}`;
+  await page.goto(discuss);
+  const out = page.locator(".target a.out");
+  await expect(out).toHaveText("blog.example.com/posts/hello-world ↗");
+  await expect(out).toHaveAttribute("href", keep.post);
+  // The same thread the post's embed shows, tips included; no site moderators here.
+  await expect(widget().locator("h2")).toHaveText(/^\d+ comments$/);
+  await expect(comment("Does this work with Hugo?").locator(".tipbadge").first()).toHaveText("★ Tipped 5 coins");
+  await expect(widget()).toContainText("BUY CHEAP WATCHES");
+  await expect(widget().getByRole("button", { name: "Hide" })).toHaveCount(0);
+
+  const ada = comment("one <script> tag");
+  await approve(ada.getByRole("button", { name: "Mute author" }));
+  await expect(widget().locator(".hidden-note").filter({ hasText: "You muted this author." })).toHaveCount(1, { timeout: 180_000 });
+  await expect(widget()).not.toContainText("one <script> tag");
+  // Only for this reader: the post itself, with its own moderator, still shows Ada.
+  await page.goto(demo());
+  await expect(comment("one <script> tag")).toBeVisible();
+  // Unmuted again, so the tests after see the thread as before.
+  await page.goto(discuss);
+  await widget().locator(".hidden-note").filter({ hasText: "You muted this author." }).getByRole("button", { name: "Show" }).click();
+  await approve(comment("one <script> tag").getByRole("button", { name: "Unmute author" }));
+  // Landed once the chain no longer has the mark.
+  await expect(comment("one <script> tag").getByRole("button", { name: "Mute author" })).toBeVisible({ timeout: 180_000 });
+  await expect(comment("one <script> tag")).not.toHaveClass(/marked/);
+
+  // A pasted address that isn't a web page's is refused, not linked.
+  await page.goto(`${keep.home}discuss/?url=${encodeURIComponent("javascript:alert(1)")}`);
+  await expect(page.locator("#target")).toContainText("That isn't a web page's address");
+  await expect(page.locator(".target a.out")).toHaveCount(0);
+});
+
 test("a write the node really loses offers Retry, and Retry lands it", async () => {
   // The node keeps a write sent to its public port only in memory: with no
   // block mined, a restart loses it for real.
@@ -262,7 +342,7 @@ test("a write the node really loses offers Retry, and Retry lands it", async () 
   await approve(mine.getByRole("button", { name: "Retry" }));
   await expect(mine).not.toHaveClass(/pending/);
   await expect(widget().locator("h2")).toHaveText(`${Number.parseInt(before) + 1} comments`);
-  assert.equal(await balance(reader), 0n, "the reader holds no coins");
+  assert.equal(await balance(reader), 7n, "the reader's coins are only what was left after the tip");
 });
 
 // Passkeys are driven only in Chromium (its virtual authenticator); reading is checked in every engine.

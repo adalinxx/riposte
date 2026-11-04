@@ -29,7 +29,7 @@
   // The demo takes its chain, hosts, fee sponsor and moderators from its address, for testing.
   const params = new URLSearchParams(location.search);
   const element = document.getElementById("riposte");
-  for (const name of ["page", "moderators", "chain", "nodes", "sponsor", "wallet"]) {
+  for (const name of ["page", "url", "moderators", "chain", "nodes", "sponsor", "wallet"]) {
     const value = params.get(name === "nodes" ? "node" : name);
     if (value) element.dataset[name] = value;
   }

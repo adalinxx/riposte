@@ -7,10 +7,12 @@
  * (`[{ to, amount }]`, amounts decimal strings) made in the same
  * transaction. No fee: the wallet's to set. `fund` names the key prefixes of
  * a fee sponsor's fund that may pay the fee, for the wallet to pass on.
+ * `coinOnly`: the payments come from the account's coins, and a wallet
+ * refuses rather than have a sponsor pay any shortfall for work.
  */
-export function writeRequest(chainPath, { actions, payments }, fund) {
+export function writeRequest(chainPath, { actions, payments, coinOnly }, fund) {
   if (actions.length === 0) throw new Error("Nothing to write");
-  return { chainPath: [...chainPath], actions, ...(payments?.length && { payments }), ...(fund?.length && { fund: [...fund] }) };
+  return { chainPath: [...chainPath], actions, ...(payments?.length && { payments }), ...(coinOnly && { coinOnly: true }), ...(fund?.length && { fund: [...fund] }) };
 }
 
 /**

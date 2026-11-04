@@ -184,3 +184,32 @@ test("tips: paid to the author in the same write, totalled per comment", async (
   assert.equal(r.amountOf("18446744073709551615"), 2n ** 64n - 1n);
   assert.equal(r.amountOf("18446744073709551616"), undefined);
 });
+
+test("a reader's mutes are their own records, apart from moderators' blocks", async () => {
+  const s = memory();
+  const page = await r.pageKey("example.com", "example.com/p");
+  s.apply(await r.mute(s, A, B));
+  assert.deepEqual([...(await r.muted(s, A))], [B]);
+  assert.deepEqual([...(await r.muted(s, M))], []);
+  // A moderator's mute hides nothing on the pages that follow their marks.
+  s.apply(await r.mute(s, M, A));
+  assert.equal((await r.hidden(s, page, [M])).accounts.size, 0);
+  assert.deepEqual((await r.mute(s, A, B)).actions, [], "muting twice writes nothing");
+  s.apply(await r.mute(s, A, B, false));
+  assert.equal((await r.muted(s, A)).size, 0);
+  // Not a reader's write on a site: no fund pays for it.
+  assert.ok(!r.fundPrefixes(r.siteOf(page)).some((p) => r.muteKey(A, B).startsWith(p)));
+});
+
+test("a tip asks the wallet to pay from coins only", async () => {
+  const { writeRequest } = await import("../src/wallet.mjs");
+  const page = await r.pageKey("example.com", "example.com/p");
+  const t = r.tip(page, B, { author: A, id: r.newId() }, 3);
+  assert.equal(t.coinOnly, true);
+  const request = writeRequest(["Nexus", "riposte"], t, r.fundPrefixes(r.siteOf(page)));
+  assert.equal(request.coinOnly, true);
+  assert.deepEqual(request.payments, [{ to: A, amount: "3" }]);
+  assert.equal(request.fund.length, 3);
+  // Other writes don't say it.
+  assert.equal(writeRequest(["Nexus", "riposte"], r.comment(page, B, { text: "x" })).coinOnly, undefined);
+});

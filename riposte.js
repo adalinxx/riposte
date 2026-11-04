@@ -6,7 +6,6 @@
 // The element may say:
 //   data-page        a name for the page on this site that outlives its path (default: its host and path)
 //   data-url         show another address's thread, as an embed there would (the discuss page)
-//   data-mute        let a signed-in reader mute authors for themselves (the discuss page)
 //   data-moderators  account IDs, comma-separated, whose hide/block marks this page follows
 //   data-chain, data-nodes, data-sponsor, data-wallet   another chain, hosts, fee sponsor or Selfhold
 //
@@ -116,6 +115,10 @@ const store = {
 /** What went wrong with a write, for a person. */
 function walletMessage(error) {
   if (error?.code === "NotEnoughCoins") return String(error.message);
+  // No sponsor asked: the account's own coins fall short, as for a tip (coinOnly), which no work pays.
+  if (error?.code === "NeedsCoins" && error.sponsor === null) {
+    return `Your account holds ${count(Number(error.balance), "coin")}, and this needs ${error.needed} from your coins. Nothing was sent.`;
+  }
   if (error?.code === "NeedsCoins") {
     const why = {
       down: "The fee sponsor isn't answering right now, so this device's work can't pay for the comment.",
@@ -162,7 +165,6 @@ async function mount(element) {
   const nodes = data.nodes ? list(data.nodes) : DEFAULTS.nodes;
   const sponsor = data.sponsor ?? SPONSOR;
   const moderators = list(data.moderators).filter(records.isAddress);
-  const mute = data.mute !== undefined;
   const riposte = createRiposte({ sdk, chain, nodes });
   const page = await riposte.page(data.url ? data.url : data.page ? { name: data.page, site: location.host } : location.href);
   const wallet = selfhold({ use: "window", ...(data.wallet && { wallet: data.wallet }), hosts: () => nodes, sponsor: () => sponsor });
@@ -182,7 +184,7 @@ async function mount(element) {
     name: store.get("riposte.name", ""),
     comments: null, // null while loading
     hidden: { comments: new Set(), accounts: new Set() },
-    muted: new Set(), // authors this reader muted, where data-mute lets them
+    muted: new Set(), // authors this reader muted, for themselves
     tipFor: null, // "author/id" of the open Tip control
     tipAmount: TIP_AMOUNTS[0],
     balance: null, // the reader's coins, read when the Tip control opens
@@ -206,10 +208,10 @@ async function mount(element) {
   async function load() {
     try {
       const me = state.me;
-      const [comments, hidden, mine] = await Promise.all([page.comments({ fresh: true }), page.hidden(moderators), mute && me ? page.hidden([me]) : null]);
+      const [comments, hidden, muted] = await Promise.all([page.comments({ fresh: true }), page.hidden(moderators), me ? page.muted(me) : new Set()]);
       state.comments = comments;
       state.hidden = hidden;
-      state.muted = mine?.accounts ?? new Set();
+      state.muted = muted;
       state.error = null;
       const landed = new Set(comments.map(keyOf));
       state.pending = state.pending.filter((p) => !landed.has(keyOf(p)));
@@ -277,7 +279,7 @@ async function mount(element) {
           ${tips.count ? `<span class="tipbadge">★ ${esc(tipsLabel(tips))}</span>` : ""}
           ${mine ? `<button data-act="delete" data-key="${key}">Delete</button>` : ""}
           ${isMod() && !mine ? `<button data-act="hide" data-key="${key}">${state.hidden.comments.has(key) ? "Unhide" : "Hide"}</button><button data-act="block" data-key="${key}">${state.hidden.accounts.has(c.author) ? "Unblock author" : "Block author"}</button>` : ""}
-          ${mute && state.me && !mine ? `<button data-act="mute" data-key="${key}">${muted ? "Unmute author" : "Mute author"}</button>` : ""}
+          ${state.me && !mine ? `<button data-act="mute" data-key="${key}">${muted ? "Unmute author" : "Mute author"}</button>` : ""}
         </div>
         ${state.tipFor === key ? tipper(key) : ""}`;
     return `<li class="c${c.pending ? " pending" : ""}${hiddenBy ? " marked" : ""}${tips.count ? " tipped" : ""}" id="c-${c.id}">
@@ -577,12 +579,16 @@ async function mount(element) {
         state.tipping.set(key, total);
         say(`Tipping ${count(amount, "coin")}… this takes a few minutes.`);
         watch(() => !state.tipping.has(key) && (say(""), true));
+      } else if (state.tipFor === key) {
+        // Refused for want of coins, maybe: the control shows the balance as it is now.
+        state.balance = await riposte.balance(state.me).catch(() => state.balance);
+        render();
       }
       return;
     }
     if (act === "mute") {
       const on = !state.muted.has(to.author);
-      if (await writing((how) => page.block(to.author, how, on))) watch(() => state.muted.has(to.author) === on);
+      if (await writing((how) => page.mute(to.author, how, on))) watch(() => state.muted.has(to.author) === on);
       return;
     }
     if (act === "like") {

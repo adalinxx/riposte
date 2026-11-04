@@ -5,6 +5,7 @@
 //   like/<page>/<author>/<id>/<a>  "1": <a> likes that comment
 //   hide/<m>/<page>/<author>/<id>  "1": moderator <m> hides that comment
 //   block/<m>/<a>                  "1": moderator <m> hides everything <a> writes
+//   mute/<a>/<muted>               "1": reader <a> hides everything <muted> writes, for themselves
 //   tip/<page>/<author>/<id>/<a>/<tid>  "<amount>": <a> tipped that comment, and
 //                                  the same write paid <author> the amount
 //
@@ -127,6 +128,7 @@ const ref = ({ author, id }) => (need(isAddress, "an account", author), need(isI
 export const commentKey = (page, author, id) => (need(isPage, "a page", page), ref({ author, id }), `comment/${page}/${author}/${id}`);
 export const likeKey = (page, to, account) => (need(isAddress, "an account", account), `like/${commentKey(page, to.author, to.id).slice("comment/".length)}/${account}`);
 export const hideKey = (moderator, page, to) => (need(isAddress, "an account", moderator), `hide/${moderator}/${commentKey(page, to.author, to.id).slice("comment/".length)}`);
+export const muteKey = (account, muted) => (need(isAddress, "an account", account), need(isAddress, "an account", muted), `mute/${account}/${muted}`);
 export const tipKey = (page, to, account, tid) => (need(isAddress, "an account", account), need(isId, "a tip id", tid), `tip/${commentKey(page, to.author, to.id).slice("comment/".length)}/${account}/${tid}`);
 export const blockKey = (moderator, account) => (need(isAddress, "an account", moderator), need(isAddress, "an account", account), `block/${moderator}/${account}`);
 
@@ -219,6 +221,14 @@ export async function hidden(state, page, moderators) {
   return marks;
 }
 
+/** The accounts `account` muted: a Set. */
+export async function muted(state, account) {
+  need(isAddress, "an account", account);
+  const found = new Set();
+  for (const { parts: [muted] } of await entries(state, `mute/${account}/`, 1)) if (isAddress(muted)) found.add(muted);
+  return found;
+}
+
 /**
  * Comments as a tree: `[{ ...comment, replies: [...] }]`, oldest first at each
  * level. A reply whose parent is gone hangs under a stand-in
@@ -288,13 +298,14 @@ export function comment(page, author, { text, name, reply }, { id = newId() } = 
  * `account` tips the comment `to` under `page` `amount` coins (a whole number,
  * at least 1): `{ id, actions, payments }`. The payment to the comment's
  * author goes in the same write, where the policy checks it, and comes from
- * the account's coins.
+ * the account's coins: `coinOnly` asks the wallet never to buy any of it
+ * with work.
  */
 export function tip(page, account, to, amount, { id = newId() } = {}) {
   const value = typeof amount === "bigint" || (typeof amount === "number" && Number.isSafeInteger(amount)) ? String(amount) : amount;
   if (amountOf(value) === undefined) throw new Error("A tip is a whole number of coins, at least 1.");
   if (account === to.author) throw new Error("You can't tip your own comment.");
-  return { id, actions: [{ key: tipKey(page, to, account, id), newValue: value }], payments: [{ to: to.author, amount: value }] };
+  return { id, actions: [{ key: tipKey(page, to, account, id), newValue: value }], payments: [{ to: to.author, amount: value }], coinOnly: true };
 }
 
 /** `author` deletes their comment `id` under `page`. Nothing if it is gone. */
@@ -317,3 +328,5 @@ export const like = (state, page, account, to, on = true) => mark(state, likeKey
 export const hide = (state, page, m, to, on = true) => mark(state, hideKey(m, page, to), on);
 /** Moderator `m` hides (or shows again) everything `account` writes. */
 export const block = (state, m, account, on = true) => mark(state, blockKey(m, account), on);
+/** Reader `me` mutes (or unmutes) `account`, for themselves only. */
+export const mute = (state, me, account, on = true) => mark(state, muteKey(me, account), on);

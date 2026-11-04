@@ -56,6 +56,7 @@ author** then appear on each comment.
 | `like/<page>/<author>/<id>/<a>` | `1`: `<a>` likes the comment | `<a>` |
 | `hide/<m>/<page>/<author>/<id>` | `1`: moderator `<m>` hides the comment | `<m>` |
 | `block/<m>/<a>` | `1`: moderator `<m>` hides everything `<a>` writes | `<m>` |
+| `mute/<a>/<muted>` | `1`: reader `<a>` hides everything `<muted>` writes, for themselves | `<a>` |
 | `tip/<page>/<author>/<id>/<a>/<tid>` | the amount: `<a>` tipped the comment | `<a>`: created, never edited or deleted |
 
 `<page>` is 32 characters: the site, then the page, each SHA-256 in
@@ -73,7 +74,12 @@ much, `<a>` may not be `<author>`, and `<author>` may not sign it. Tips to one
 author that come one after another are paid by one credit to them; each run
 of tips needs its own credit, in the order the runs come. A tip is paid from
 the tipper's coins: the widget checks the balance first and doesn't send a
-tip it doesn't cover.
+tip it doesn't cover, and asks the wallet for `coinOnly`, so the wallet
+refuses rather than buy a shortfall with work.
+
+A mute is a reader's own mark, on every page they read signed in. It is not
+a block: a moderator who mutes someone hides them only for themselves, never
+on their site.
 An `<id>` is the comment's time in milliseconds in base 36 (9 characters)
 followed by 4 random characters, so comments sort by time. `reply` is
 `{ author, id }`. A reply whose parent is gone shows under "This comment was
@@ -97,6 +103,7 @@ await page.comment({ text, name, reply }, how);      // { id, sent }
 await page.like({ author, id }, how);                // page.like(to, how, false) unlikes
 await page.remove(id, how);
 await page.hide({ author, id }, how);  await page.block(account, how);
+await page.mute(account, how);  await page.muted(account); // a reader's own mutes, a Set
 await page.tip({ author, id }, 5, how);              // 5 coins from the account's balance to the author
 await riposte.balance(account);                      // coins, a BigInt
 page.site; page.fund;                                // the site's key, and its fund prefixes
@@ -109,9 +116,8 @@ page.site; page.fund;                                // the site's key, and its 
 `discuss/?url=<address>` shows the thread for any http(s) address, keyed as
 an embed on that page would key it (without `data-page`), with a link out to
 the page. There are no moderators there: a signed-in reader can **Mute
-author**, which writes the ordinary `block/<me>/<author>` record, and the
-page follows the reader's own marks. A muted author's comments fold away as
-a moderator's would. The landing page has a bookmarklet that opens it for
+author** (`mute/<me>/<author>`), as on any page with the widget, and a muted
+author's comments fold away for them as a moderator's hidden ones do. The landing page has a bookmarklet that opens it for
 the current page.
 
 ## Layout

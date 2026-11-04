@@ -94,6 +94,8 @@ export function createRiposte(options) {
       fund,
       /** Every comment, oldest first, each `{ author, id, at, text, name?, reply?, likes, tips: { count, total } }`. */
       comments: async (options) => records.comments(await state(options), key),
+      /** The accounts `account` muted, for themselves: a Set. Mutes hold on every page. */
+      muted: async (account, options) => records.muted(await state(options), account),
       /** What `moderators` hide here: `{ comments: Set<"author/id">, accounts: Set }`. */
       hidden: async (moderators, options) => records.hidden(await state(options), key, moderators),
 
@@ -118,6 +120,8 @@ export function createRiposte(options) {
       remove: async (id, how) => send(await records.remove(await state({ fresh: true }), key, await signer(how), id), how, fund),
       like: async (to, how, on = true) => send(await records.like(await state({ fresh: true }), key, await signer(how), to, on), how, fund),
       hide: async (to, how, on = true) => send(await records.hide(await state({ fresh: true }), key, await signer(how), to, on), how),
+      /** Mutes (or unmutes) `account` for the signed-in reader alone, on every page. */
+      mute: async (account, how, on = true) => send(await records.mute(await state({ fresh: true }), await signer(how), account, on), how),
       block: async (account, how, on = true) => send(await records.block(await state({ fresh: true }), await signer(how), account, on), how),
     };
   }

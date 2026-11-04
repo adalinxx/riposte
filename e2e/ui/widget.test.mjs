@@ -7,7 +7,8 @@
 // With no coins the Tip control says so and sends nothing; given coins, they
 // tip a comment from their balance and it is highlighted. The discuss page
 // shows the post's thread from its address alone, and a reader mutes an
-// author there for themselves.
+// author there, for themselves only: where they moderate, nobody else's view
+// changes.
 //
 //   LATTICE=<lattice-node>/.build/debug/lattice \
 //   LATTICE_WALLET_WEB=<selfhold-wallet>/dist-web node --test e2e/ui/widget.test.mjs
@@ -68,6 +69,13 @@ before(async () => {
   // the passkey the virtual authenticator holds there is the same each time.
   await context.addInitScript((origin) => {
     if (location.origin === origin) window.close = () => {};
+  }, walletOrigin);
+  // Selfhold's window keeps the last write a site asked of it, for checking what the widget sent.
+  await context.addInitScript((origin) => {
+    if (location.origin !== origin) return;
+    addEventListener("message", (event) => {
+      if (event.data?.call?.method === "writeRecords") window.lastWrite = event.data.call.params;
+    });
   }, walletOrigin);
   await context.addInitScript((port) => {
     if (location.port !== String(port)) return;
@@ -269,10 +277,37 @@ test("a tip: refused without coins, then paid from the balance and highlighted",
   await tipper.getByRole("button", { name: "5", exact: true }).click();
   await expect(tipper.locator(".note")).toContainText("Paid from your balance of 12 coins");
   await approve(tipper.getByRole("button", { name: "Send 5 coins" }));
+  // The write asks Selfhold to pay from coins only, and names the site's fund.
+  const sent = await walletWindow.evaluate(() => window.lastWrite);
+  assert.equal(sent.coinOnly, true);
+  assert.deepEqual(sent.payments, [{ to: keep.mod, amount: "5" }]);
+  assert.equal(sent.fund.length, 3);
+  assert.ok(sent.fund.every((prefix) => /^(comment|like|tip)\/[a-z2-7]{16}$/.test(prefix)), sent.fund.join());
   await expect(grace).toHaveClass(/tipped/);
   await expect(grace.locator(".tipbadge").first()).toHaveText("★ Tipped 5 coins");
   assert.equal(await balance(reader), 7n, "the tip came from the reader's balance; the sponsor paid the fee");
   assert.equal(await balance(keep.mod), authorBefore + 5n, "the author was paid");
+
+  // Past the balance when Selfhold looks: the widget saw more coins (a stale read, faked here),
+  // but Selfhold refuses a coin-only tip it can't cover, buying nothing with work.
+  const account = (url) => url.pathname.endsWith(`/api/state/account/${reader}`);
+  await page.route(account, async (route) => {
+    const real = await route.fetch();
+    await route.fulfill({ response: real, json: { ...(await real.json()), balance: "100" } });
+  });
+  await open().click();
+  await tipper.getByRole("button", { name: "25", exact: true }).click();
+  await expect(tipper.locator(".note")).toContainText("Paid from your balance of 100 coins");
+  const selfholdWindow = await inSelfhold(tipper.getByRole("button", { name: "Send 25 coins" }));
+  await expect(selfholdWindow.locator("body")).toContainText("from your coins only");
+  await page.unroute(account);
+  await selfholdWindow.getByRole("button", { name: "Close" }).click();
+  await page.bringToFront();
+  await expect(widget().locator(".status")).toHaveText("Your account holds 7 coins, and this needs 25 from your coins. Nothing was sent.");
+  await expect(tipper.locator(".note")).toHaveText(/^You hold 7 coins, and a tip of 25 needs 25\./);
+  await expect(tipper.getByRole("button", { name: "Send 25 coins" })).toBeDisabled();
+  await tipper.getByRole("button", { name: "Cancel" }).click();
+  assert.equal(await balance(reader), 7n, "nothing was sent");
   // Your own comment has no Tip.
   await expect(comment("Does it work with Astro too?").getByRole("button", { name: "Tip", exact: true })).toHaveCount(0);
 });
@@ -289,20 +324,32 @@ test("the discuss page shows a post's thread from its address, and a reader mute
   await expect(widget()).toContainText("BUY CHEAP WATCHES");
   await expect(widget().getByRole("button", { name: "Hide" })).toHaveCount(0);
 
-  const ada = comment("one <script> tag");
-  await approve(ada.getByRole("button", { name: "Mute author" }));
-  await expect(widget().locator(".hidden-note").filter({ hasText: "You muted this author." })).toHaveCount(1, { timeout: 180_000 });
-  await expect(widget()).not.toContainText("one <script> tag");
-  // Only for this reader: the post itself, with its own moderator, still shows Ada.
+  // Bob wrote three comments here; muting him folds them all, for this reader.
+  const BOB = "No sign-up and no captcha either";
+  const mutedNotes = () => widget().locator(".hidden-note").filter({ hasText: "You muted this author." });
+  await approve(comment(BOB).getByRole("button", { name: "Mute author" }));
+  await expect(mutedNotes()).toHaveCount(3, { timeout: 180_000 });
+  await expect(widget()).not.toContainText(BOB);
+  await expect(widget()).not.toContainText("BUY CHEAP WATCHES");
+  // For this reader everywhere: the post folds Bob for them too.
   await page.goto(demo());
-  await expect(comment("one <script> tag")).toBeVisible();
+  await expect(mutedNotes().first()).toBeVisible();
+  await expect(widget()).not.toContainText(BOB);
+  // And only for them: on a blog that names this reader its moderator, another reader still sees Bob.
+  const other = await browser.newPage();
+  await other.goto(demo().replace(/moderators=[^&]+/, `moderators=${reader}`));
+  const view = other.locator("#riposte section.rp");
+  await expect(view.locator("li.c").filter({ hasText: BOB })).toHaveCount(1);
+  await expect(view).toContainText("BUY CHEAP WATCHES");
+  await other.close();
   // Unmuted again, so the tests after see the thread as before.
   await page.goto(discuss);
-  await widget().locator(".hidden-note").filter({ hasText: "You muted this author." }).getByRole("button", { name: "Show" }).click();
-  await approve(comment("one <script> tag").getByRole("button", { name: "Unmute author" }));
+  await expect(mutedNotes()).toHaveCount(3);
+  while ((await mutedNotes().count()) > 0) await mutedNotes().first().getByRole("button", { name: "Show" }).click();
+  await approve(comment(BOB).getByRole("button", { name: "Unmute author" }));
   // Landed once the chain no longer has the mark.
-  await expect(comment("one <script> tag").getByRole("button", { name: "Mute author" })).toBeVisible({ timeout: 180_000 });
-  await expect(comment("one <script> tag")).not.toHaveClass(/marked/);
+  await expect(comment(BOB).getByRole("button", { name: "Mute author" })).toBeVisible({ timeout: 180_000 });
+  await expect(comment(BOB)).not.toHaveClass(/marked/);
 
   // A pasted address that isn't a web page's is refused, not linked.
   await page.goto(`${keep.home}discuss/?url=${encodeURIComponent("javascript:alert(1)")}`);

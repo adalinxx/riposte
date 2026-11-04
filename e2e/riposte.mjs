@@ -228,6 +228,8 @@ const walletOf = (who) => ({
   address: async () => who.address,
   writeRecords: async (request) => {
     assert.equal(request.fee, undefined, "the app leaves the fee to the wallet");
+    // Payments (tips) come from coins only: no sponsor buys a shortfall with work here.
+    if (request.payments) assert.equal(request.coinOnly, true, "a payment asks for coins only");
     const result = await send(request.chainPath, who, request); // actions, payments and fund
     if (!result.ok) throw new Error(`${result.status} ${result.text}`);
     return { transactionCID: "sent" };
@@ -372,6 +374,12 @@ try {
   assert.equal((await page.comments()).length, 3, "a mark deletes nothing");
   await page.block(alice.address, as(mod), false);
   await until("the unblock lands", async () => (await page.hidden([mod.address])).accounts.size === 0);
+  // The moderator mutes Bob for themselves: their own mark, not a block on their pages.
+  await page.mute(bob.address, as(mod));
+  await until("the mute lands", async () => (await page.muted(mod.address)).has(bob.address));
+  assert.equal((await page.hidden([mod.address])).accounts.size, 0, "a mute is no block");
+  await page.mute(bob.address, as(mod), false);
+  await until("the unmute lands", async () => (await page.muted(mod.address)).size === 0);
   console.log("  the moderator hid a comment and blocked, then unblocked, an account; nothing was deleted");
 
   // ------------------------------------------------------------ what the policy refuses, fee paid or not

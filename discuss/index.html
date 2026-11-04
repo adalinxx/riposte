@@ -76,7 +76,6 @@
     const thread = document.createElement("div");
     thread.id = "riposte";
     thread.dataset.url = url.href;
-    thread.dataset.mute = "";
     // For testing against other hosts: ?node=, ?chain=, ?sponsor=, ?wallet=.
     for (const name of ["chain", "nodes", "sponsor", "wallet"]) {
       const value = params.get(name === "nodes" ? "node" : name);

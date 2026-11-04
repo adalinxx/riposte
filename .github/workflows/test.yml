@@ -16,5 +16,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+      - run: rustup toolchain install 1.96.0 --profile minimal --target wasm32-unknown-unknown && rustup default 1.96.0
+      # The policy from source; the chain names its module by CID, so the build must be the module it runs.
+      - run: npm run build:policy
+      - run: git diff --exit-code --stat chain/riposte_policy.wasm
       # The policy (against the built module in chain/), the records, the state walk and the widget's helpers.
       - run: npm test

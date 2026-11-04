@@ -23,6 +23,11 @@ https://adalinxx.github.io/riposte/demo/ (a blog post). Both run on testnet.
   its writer. A site names its moderators, and the widget follows their
   marks on that site's pages: a hidden comment folds away, and a reader can
   still open it.
+- **Tips.** A reader who holds coins can tip a useful comment. The coins go
+  to its writer in the same transaction, and the comment is highlighted.
+- **Any page.** `discuss/?url=<address>` shows the thread for any page, the
+  same one an embed there would show. A bookmarklet on the landing page opens
+  it for the page you're on.
 
 ## Install
 
@@ -30,7 +35,7 @@ Put the tag where comments should appear. The element may also say:
 
 | Attribute | Meaning |
 | --- | --- |
-| `data-page` | the thread's name. Default: the page's host and path, without `www.`, the query, the fragment, `index.html` or a trailing slash. |
+| `data-page` | the thread's name on this site. Default: the page's host and path, without `www.`, the query, the fragment, `index.html` or a trailing slash. |
 | `data-moderators` | account IDs, comma-separated, whose marks this page follows |
 | `data-chain`, `data-nodes`, `data-sponsor`, `data-wallet` | another chain, hosts, fee sponsor or Selfhold |
 
@@ -51,14 +56,29 @@ author** then appear on each comment.
 | `like/<page>/<author>/<id>/<a>` | `1`: `<a>` likes the comment | `<a>` |
 | `hide/<m>/<page>/<author>/<id>` | `1`: moderator `<m>` hides the comment | `<m>` |
 | `block/<m>/<a>` | `1`: moderator `<m>` hides everything `<a>` writes | `<m>` |
+| `tip/<page>/<author>/<id>/<a>/<tid>` | the amount: `<a>` tipped the comment | `<a>`: created, never edited or deleted |
 
-`<page>` is SHA-256 of the page's name, in lowercase base 32, cut to 32
-characters. One prefix read finds a page's comments, and another its likes.
+`<page>` is 32 characters: the site, then the page, each SHA-256 in
+lowercase base 32 cut to 16 characters. The site is the page's host without
+`www.`; the page is its name (`data-page`, or host and path). One prefix
+read finds a page's comments, another its likes and another its tips. The
+prefixes `comment/<site>`, `like/<site>` and `tip/<site>` hold everything
+readers write on a site, so a fee sponsor's fund for the site can pay for
+exactly those writes; the widget names them as `fund` in each write it asks
+for (`page.fund`). Moderators' marks are not under them.
+
+A tip's value is a whole number of coins, at least 1, written without
+leading zeros. The same transaction must credit `<author>` at least that
+much, `<a>` may not be `<author>`, and `<author>` may not sign it. Tips to one
+author that come one after another are paid by one credit to them; each run
+of tips needs its own credit, in the order the runs come. A tip is paid from
+the tipper's coins: the widget checks the balance first and doesn't send a
+tip it doesn't cover.
 An `<id>` is the comment's time in milliseconds in base 36 (9 characters)
 followed by 4 random characters, so comments sort by time. `reply` is
 `{ author, id }`. A reply whose parent is gone shows under "This comment was
-deleted.". The policy (`policy/`) checks only who signs, how keys are spelled
-and how big values are. It never reads JSON.
+deleted.". The policy (`policy/`) checks who signs, how keys are spelled, how
+big values are and that tips are paid. It never reads JSON.
 
 Clients cap a comment at 2,000 characters and a name at 40.
 
@@ -69,17 +89,30 @@ import * as sdk from "./vendor/lattice-sdk.js";
 import { createRiposte } from "./src/index.mjs";
 
 const riposte = createRiposte({ sdk });              // or { chain, nodes }
-const page = await riposte.page(location.href);      // or riposte.page({ name: "my-post" })
-await page.comments();                               // oldest first: { author, id, at, text, name?, reply?, likes }
+const page = await riposte.page(location.href);      // or riposte.page({ name: "my-post", site: location.host })
+await page.comments();                               // oldest first: { author, id, at, text, name?, reply?, likes, tips: { count, total } }
 await page.hidden([moderator]);                      // { comments: Set<"author/id">, accounts: Set }
 const how = { wallet, account };                     // wallet: Selfhold's client
 await page.comment({ text, name, reply }, how);      // { id, sent }
 await page.like({ author, id }, how);                // page.like(to, how, false) unlikes
 await page.remove(id, how);
 await page.hide({ author, id }, how);  await page.block(account, how);
+await page.tip({ author, id }, 5, how);              // 5 coins from the account's balance to the author
+await riposte.balance(account);                      // coins, a BigInt
+page.site; page.fund;                                // the site's key, and its fund prefixes
 ```
 
 `records.tree(comments)` nests replies.
+
+## Discuss any page
+
+`discuss/?url=<address>` shows the thread for any http(s) address, keyed as
+an embed on that page would key it (without `data-page`), with a link out to
+the page. There are no moderators there: a signed-in reader can **Mute
+author**, which writes the ordinary `block/<me>/<author>` record, and the
+page follows the reader's own marks. A muted author's comments fold away as
+a moderator's would. The landing page has a bookmarklet that opens it for
+the current page.
 
 ## Layout
 
@@ -92,6 +125,7 @@ await page.hide({ author, id }, how);  await page.block(account, how);
   contexts through Lattice's own evaluator. `chain/` holds the spec and the
   built module.
 - `index.html`: the landing page. `demo/` is a blog post with the widget.
+  `discuss/` shows any address's thread.
 - `vendor/`: the Lattice SDK bundled for browsers, and Selfhold's client.
 
 ## Test

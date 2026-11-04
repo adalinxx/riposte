@@ -96,6 +96,10 @@ await page.hide({ author, id }, how);  await page.block(account, how);
 
 ## Test
 
+CI (`.github/workflows/test.yml`) runs all of the below on every push and
+pull request, against a pinned node, fee sponsor and Selfhold. It also checks
+that the policy source builds the exact module the chain runs.
+
 ```sh
 npm run build:policy        # the policy, with this machine's paths left out of it
 npm test                    # the policy, the records, the widget's helpers

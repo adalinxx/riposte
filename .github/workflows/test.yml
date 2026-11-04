@@ -166,9 +166,9 @@ jobs:
       - if: matrix.suite == 'ui'
         name: Install Playwright
         working-directory: e2e/ui
-        run: npm ci && npx playwright install --with-deps chromium
+        run: npm ci && npx playwright install --with-deps chromium firefox webkit
       - if: matrix.suite == 'ui'
-        name: The widget in Chromium with Selfhold
+        name: The widget in Chromium with Selfhold, and read in Firefox and WebKit
         working-directory: e2e/ui
         run: mkdir -p "$UI_LOGS" && npm test
       - if: failure() && matrix.suite == 'ui'

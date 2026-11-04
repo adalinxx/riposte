@@ -14,7 +14,7 @@ import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, test as nodeTest } from "node:test";
-import { chromium, expect as baseExpect } from "@playwright/test";
+import { chromium, expect as baseExpect, firefox, webkit } from "@playwright/test";
 import * as sdk from "../../vendor/lattice-sdk.js";
 
 const expect = baseExpect.configure({ timeout: 180_000 });
@@ -259,3 +259,28 @@ test("a write the host takes and then lets go of offers Retry, and Retry lands i
   await expect(widget().locator("h2")).toHaveText("7 comments");
   assert.equal(await balance(reader), 0n, "the reader holds no coins");
 });
+
+// Passkeys are driven only in Chromium (its virtual authenticator); reading is checked in every engine.
+for (const [name, engine] of [["Firefox", firefox], ["WebKit", webkit]]) {
+  test(`a reader in ${name} sees the thread, nested and moderated`, async () => {
+    const other = await engine.launch();
+    try {
+      const reader = await other.newPage();
+      const failures = [];
+      reader.on("pageerror", (error) => failures.push(error.message));
+      await reader.goto(demo());
+      const view = reader.locator("#riposte section.rp");
+      await expect(view.locator("h2")).toHaveText(/^\d+ comments$/);
+      const grace = view.locator("li.c").filter({ hasText: "Does this work with Hugo?" }).first();
+      await expect(grace).toContainText("Grace");
+      // Ada's answer sits under Grace's question.
+      await expect(grace.locator("ol li.c").filter({ hasText: "one <script> tag" })).toHaveCount(1);
+      await expect(view.locator(".hidden-note")).toHaveCount(1);
+      await expect(view).not.toContainText("BUY CHEAP WATCHES");
+      await expect(view.getByRole("button", { name: "Sign in to post" })).toBeVisible();
+      assert.deepEqual(failures, [], `no page errors in ${name}`);
+    } finally {
+      await other.close();
+    }
+  });
+}

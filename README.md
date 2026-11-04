@@ -170,9 +170,11 @@ second reader sees it folded:
 
 ## Trial
 
-The trial chain is `Nexus/testnet/riposte-bc49ba`, from `chain/spec.json`
-(policy module `bafyreigajyzr5o7ygzhz77jhvymxq3r6s5bgm72wdd4jjzf43iu7djcoae`).
+The trial chain is `Nexus/testnet/riposte-1fab4d`, from `chain/spec.json`
+(policy module `bafyreifd4hg4pewgxqej6twemu3f6cqznd5at35xha2wt62zn25w6jtd3u`).
 It was created on the operator's Mac node, which merge-mines it. Its premine
 goes to a test key that is not in this repository. The shared testnet app
 hosts `lattice-testnet-apps-iad` and `-ams` host it. The fee sponsor on iad
-pays Riposte's fees from a float of 100,000 sent from the premine.
+pays Riposte's fees from a float of 100,000 sent from the premine, and
+takes site funds (`--funds`), so a site can lend it more float for its own
+pages.

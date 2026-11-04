@@ -17,9 +17,9 @@ env:
   LATTICE_NODE_REPO: 0xLattice/lattice-node
   LATTICE_NODE_REF: 63c6eb13d0372ef891c0c68ae502a9bfb2b79944
   LATTICE_SPONSOR_REPO: 0xLattice/lattice-sponsor
-  LATTICE_SPONSOR_REF: 613c3d7c7ff491117cd0f967cc2e5078a475f374
+  LATTICE_SPONSOR_REF: 99c4ebea5c3ec827935e836a95ad2ce397acc472 # site funds (lattice-sponsor#11)
   LATTICE_WALLET_REPO: adalinxx/selfhold-wallet
-  LATTICE_WALLET_REF: f51dd424b6db72eac2a04656071c0932e7795317 # fund and coinOnly (selfhold-wallet#51, open: move to its merge commit)
+  LATTICE_WALLET_REF: 410040a8cafabaf895d279468638c922d07bb630 # fund and coinOnly (selfhold-wallet#51)
 
 jobs:
   policy:

@@ -4,21 +4,176 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# The other repositories these tests run against, pinned to commits the suites
+# pass on. Move a pin on purpose, in its own commit, after running the suites.
+env:
+  RUST_TOOLCHAIN: "1.96.0"
+  NODE_VERSION: "24"
+  LATTICE_NODE_REPO: 0xLattice/lattice-node
+  LATTICE_NODE_REF: 63c6eb13d0372ef891c0c68ae502a9bfb2b79944
+  LATTICE_SPONSOR_REPO: 0xLattice/lattice-sponsor
+  LATTICE_SPONSOR_REF: 613c3d7c7ff491117cd0f967cc2e5078a475f374
+  LATTICE_WALLET_REPO: adalinxx/selfhold-wallet
+  LATTICE_WALLET_REF: 12acbec82395d26fe50722e98f0dd9564b1757f4 # a dropped write frees its nonce (selfhold-wallet#50)
+
 jobs:
-  test:
+  policy:
+    name: Policy, records and the widget's helpers
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 24
-      - run: rustup toolchain install 1.96.0 --profile minimal --target wasm32-unknown-unknown && rustup default 1.96.0
-      # The policy from source; the chain names its module by CID, so the build must be the module it runs.
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$RUST_TOOLCHAIN"
       - run: npm run build:policy
-      - run: git diff --exit-code --stat chain/riposte_policy.wasm
-      # The policy (against the built module in chain/), the records, the state walk and the widget's helpers.
-      - run: npm test
+      # The chain names its module by CID: what this source builds must be the module it runs.
+      - name: The committed module is the one this source builds
+        run: git diff --exit-code --stat chain/riposte_policy.wasm
+      - name: Unit tests
+        env:
+          CONTEXT_DIR: ${{ github.workspace }}/contexts
+        run: npm test
+      # Every context the policy tests judged, with its verdict, for the engine job.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: contexts
+          path: contexts
+          retention-days: 3
+
+  engine:
+    name: The node's engine agrees
+    needs: policy
+    runs-on: ubuntu-latest
+    container: swift:6.1-jammy
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: contexts
+          path: contexts
+      - name: Build host-check
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
+          swift build -c release --package-path policy/host-check
+      - name: Replay every context through Lattice's own host
+        shell: bash # pipefail: a disagreement fails the step through tee
+        run: policy/host-check/.build/release/host-check chain/riposte_policy.wasm contexts | tee replay.txt
+      - name: The spec names the module the node computes
+        shell: bash
+        run: |
+          cid=$(sed -n 's/^module \([^ ]*\) .*/\1/p' replay.txt)
+          test -n "$cid"
+          grep -q "$cid" chain/spec.json || { echo "chain/spec.json does not name $cid"; exit 1; }
+
+  node:
+    name: Build the Lattice node and fee sponsor
+    runs-on: ubuntu-latest
+    container: swift:6.1-jammy
+    timeout-minutes: 120
+    steps:
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: lattice-node-${{ env.LATTICE_NODE_REF }}-sponsor-${{ env.LATTICE_SPONSOR_REF }}-static-1
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.LATTICE_NODE_REPO }}
+          ref: ${{ env.LATTICE_NODE_REF }}
+          path: lattice-node
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.LATTICE_SPONSOR_REPO }}
+          ref: ${{ env.LATTICE_SPONSOR_REF }}
+          path: lattice-sponsor
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build
+        shell: bash
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
+          cd lattice-node
+          # Static Swift runtime, so the binaries run on a plain runner. The
+          # lattice command runs the node and the miner from beside it.
+          swift build --static-swift-stdlib
+          mkdir ../bin
+          bin="$(swift build --static-swift-stdlib --show-bin-path)"
+          for b in lattice lattice-node lattice-miner lattice-mining-coordinator; do
+            if [ -f "$bin/$b" ]; then cp "$bin/$b" ../bin/; fi
+          done
+          cd ../lattice-sponsor
+          swift build --static-swift-stdlib --product lattice-sponsor
+          cp "$(swift build --static-swift-stdlib --show-bin-path)"/lattice-sponsor ../bin/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lattice
+          path: bin
+          retention-days: 3
+
+  e2e:
+    name: ${{ matrix.suite == 'ui' && 'Browser' || 'End to end' }}
+    needs: node
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [protocol, ui]
+    env:
+      LATTICE: ${{ github.workspace }}/.deps/bin/lattice
+      LATTICE_WALLET_WEB: ${{ github.workspace }}/.deps/lattice-wallet/dist-web
+      UI_LOGS: ${{ github.workspace }}/ui-logs
+      UI_SHOT: ${{ github.workspace }}/ui-logs/failure.png
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: lattice
+          path: .deps/bin
+      # The binaries link the Swift runtime in, but not these.
+      - run: chmod +x .deps/bin/* && sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-0 libcurl4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - if: matrix.suite == 'protocol'
+        name: Riposte against a real node and fee sponsor
+        run: node e2e/riposte.mjs
+
+      - if: matrix.suite == 'ui'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.LATTICE_WALLET_REPO }}
+          ref: ${{ env.LATTICE_WALLET_REF }}
+          path: .deps/lattice-wallet
+          submodules: true
+      - if: matrix.suite == 'ui'
+        name: Build Selfhold's window
+        working-directory: .deps/lattice-wallet
+        run: npm ci && npm run build:web
+      - if: matrix.suite == 'ui'
+        name: Install Playwright
+        working-directory: e2e/ui
+        run: npm ci && npx playwright install --with-deps chromium
+      - if: matrix.suite == 'ui'
+        name: The widget in Chromium with Selfhold
+        working-directory: e2e/ui
+        run: mkdir -p "$UI_LOGS" && npm test
+      - if: failure() && matrix.suite == 'ui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-logs
+          path: ui-logs
+          retention-days: 7

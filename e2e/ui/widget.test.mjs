@@ -15,7 +15,6 @@ import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, test as nodeTest } from "node:test";
 import { chromium, expect as baseExpect, firefox, webkit } from "@playwright/test";
-import * as sdk from "../../vendor/lattice-sdk.js";
 
 const expect = baseExpect.configure({ timeout: 180_000 });
 const walletWeb = process.env.LATTICE_WALLET_WEB && resolve(process.env.LATTICE_WALLET_WEB);
@@ -231,32 +230,38 @@ test("the blog's moderator hides a comment; another reader sees it folded", asyn
   assert.equal(await balance(reader), 0n, "the moderator holds no coins");
 });
 
-test("a write the host takes and then lets go of offers Retry, and Retry lands it", async () => {
+test("a write the node really loses offers Retry, and Retry lands it", async () => {
+  // The node keeps a write sent to its public port only in memory: with no
+  // block mined, a restart loses it for real.
+  const { dirname } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const root = dirname(keepFile);
+  const lattice = (...args) => execFileSync(process.env.LATTICE, [...args, "--root", root], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const pooled = async () => (await (await fetch(`${keep.node}/api/mempool?chainPath=${keep.chain}`, { cache: "no-store" })).json().catch(() => ({}))).count ?? 0;
   await page.goto(demo());
-  await expect(widget().locator("h2")).toHaveText("6 comments");
-  // The host answers "pooled" but keeps nothing, as when a reorg or eviction drops it.
-  let dropped = 0;
-  await context.route((url) => url.pathname === "/transactions", async (route) => {
-    if (route.request().method() !== "POST") return route.continue();
-    const wire = JSON.parse(route.request().postData()).transaction;
-    const body = { ...wire.body, accountActions: wire.body.accountActions.map((a) => ({ owner: a.owner, delta: BigInt(a.delta) })), nonce: BigInt(wire.body.nonce) };
-    dropped++;
-    await route.fulfill({ json: { transactionCID: sdk.signedTransactionCID(wire.signatures, body), mempoolCount: 1, mempoolBytes: 1 } });
-  });
-  await widget().getByLabel("Comment", { exact: true }).fill("This one the host lets go of.");
-  await approve(widget().getByRole("button", { name: "Post", exact: true }));
-  const mine = comment("the host lets go of");
-  await expect(mine).toHaveClass(/pending/);
-  // Not after 20 minutes: as soon as the host neither holds it nor counts it.
-  await expect(mine.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 90_000 });
+  await expect(widget().locator("h2")).toHaveText(/^\d+ comments$/);
+  const before = await widget().locator("h2").innerText();
+  lattice("mine", "stop");
+  try {
+    await widget().getByLabel("Comment", { exact: true }).fill("This one the node loses in a restart.");
+    await approve(widget().getByRole("button", { name: "Post", exact: true }));
+    const mine = comment("the node loses in a restart");
+    await expect(mine).toHaveClass(/pending/);
+    await until("the node pools it", async () => (await pooled()) > 0, 120);
+    lattice("down");
+    lattice("up");
+    await until("the node is back", async () => (await fetch(`${keep.node}/api/mempool?chainPath=${keep.chain}`).catch(() => null))?.ok, 120);
+    assert.equal(await pooled(), 0, "the restart lost it");
+  } finally {
+    lattice("mine", "start");
+  }
+  const mine = comment("the node loses in a restart");
+  // Not after 20 minutes: as soon as the node neither holds it nor counts it.
+  await expect(mine.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 120_000 });
   await expect(mine.locator(".meta")).toHaveAttribute("data-state", "Not saved: it didn't go through");
-  assert.equal(dropped, 1);
-
-  await context.unroute((url) => url.pathname === "/transactions");
-  await context.unrouteAll();
   await approve(mine.getByRole("button", { name: "Retry" }));
   await expect(mine).not.toHaveClass(/pending/);
-  await expect(widget().locator("h2")).toHaveText("7 comments");
+  await expect(widget().locator("h2")).toHaveText(`${Number.parseInt(before) + 1} comments`);
   assert.equal(await balance(reader), 0n, "the reader holds no coins");
 });
 

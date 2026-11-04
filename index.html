@@ -62,7 +62,7 @@
 <div class="wrap">
   <header class="top">
     <a class="brand" href="./"><img src="icon.svg" alt="">Riposte</a>
-    <nav><a href="#install">Install</a><a href="demo/">Demo</a><a href="https://github.com/adalinxx/riposte">Source</a></nav>
+    <nav><a href="#install">Install</a><a href="#any-page">Any page</a><a href="demo/">Demo</a><a href="https://github.com/adalinxx/riposte">Source</a></nav>
   </header>
 
   <div class="hero">
@@ -107,15 +107,23 @@
     <div class="snippet"><pre id="snippet"></pre><button class="btn copy" data-copy="snippet">Copy</button></div>
     <p class="where">To moderate, open one of your posts, choose <b>Moderator sign-in</b> under the comments, and use the same Selfhold account. <b>Hide</b> and <b>Block author</b> then appear on each comment.</p>
     <details><summary>Options</summary>
-      <p><code>data-page="…"</code> names the page's thread. By default it's the page's host and path, so <code>https://www.example.com/post/</code> and <code>http://example.com/post</code> share comments. Set your own (a post's slug, say) to keep comments across a domain move.</p>
+      <p><code>data-page="…"</code> names the page's thread. By default it's the page's host and path, so <code>https://www.example.com/post/</code> and <code>http://example.com/post</code> share comments. Set your own (a post's slug, say) to keep comments when a post's path changes. Threads belong to your site's host, so a new domain starts new threads.</p>
       <p><code>data-moderators="id1,id2"</code> follows more than one moderator.</p>
       <p>The widget uses your page's font, text color and link color. Set <code>--riposte-accent</code> on the element to pick another accent.</p>
     </details>
   </section>
 
+  <section id="any-page">
+    <h2>Discuss any page</h2>
+    <p class="where">Comment on a page that has no comments: <a href="discuss/">paste its address</a>, or drag this button to your bookmarks bar and press it on any page.</p>
+    <div class="mod"><a class="btn" id="bookmarklet" href="discuss/">Discuss on Riposte</a><span class="muted">It opens that page's thread in a new tab.</span></div>
+    <p class="where">It's the same thread Riposte would show on the page itself, so if the site adds Riposte later, these comments are there. Nobody moderates it for you: signed in, you can mute an author, and their comments fold away for you, there and on every page with Riposte.</p>
+  </section>
+
   <section>
     <h2>Questions</h2>
     <details><summary>What does it cost?</summary><p>Nothing, for you or your readers. Each comment's fee is paid by a fee sponsor in exchange for a few seconds of work from the reader's device. Nobody holds or buys coins.</p></details>
+    <details><summary>What are tips?</summary><p>A reader who holds coins can tip a useful comment. The coins go straight to its writer in the same transaction, and the comment is highlighted with its total. Tips are paid from the reader's balance; the fee is paid like a comment's.</p></details>
     <details><summary>Where are the comments kept?</summary><p>On Riposte's chain on <a href="https://lattice.build">Lattice</a>, which any node can serve. The widget reads from public nodes and checks every piece against its hash, so a node can't make up comments. If this site disappeared, the comments would still be there.</p></details>
     <details><summary>What do you learn about my readers?</summary><p>Nothing. There are no cookies, no analytics and no server of ours. The widget loads from GitHub Pages and reads from Lattice nodes. A reader's account ID is kept in their own browser's storage.</p></details>
     <details><summary>Can I delete a comment?</summary><p>No, and neither can anyone else except the person who wrote it. You can hide it on your pages, or block its author there. A hidden comment folds away, and a reader can still open it. Other sites decide for themselves whose marks to follow.</p></details>
@@ -144,6 +152,8 @@
     if (value) guestbook.dataset[name] = value;
   }
   const SCRIPT = new URL("riposte.js", location.href.replace(/[?#].*$/, "")).href;
+  const DISCUSS = new URL("discuss/", location.href.replace(/[?#].*$/, "")).href;
+  document.getElementById("bookmarklet").href = `javascript:void(open(${JSON.stringify(`${DISCUSS}?url=`)}+encodeURIComponent(location.href)))`;
 
   let moderator = null;
   let site = "html";

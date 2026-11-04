@@ -8,8 +8,11 @@
 // Alice comments under a page; a zero-fee comment of hers is refused. Bob
 // replies and likes. Another page sees none of it. The moderator hides one
 // comment and blocks an account. Forging, editing, deleting another's
-// comment and oversized comments are refused even with the fee paid. Then
-// Alice deletes her comment and Bob's reply shows its parent is gone.
+// comment and oversized comments are refused even with the fee paid. A
+// patron who holds coins tips Alice's comment from their balance; a tip whose
+// author isn't credited, a self-tip, and a tip past the tipper's balance are
+// refused. Then Alice deletes her comment and Bob's reply shows its parent
+// is gone.
 //
 //   npm run build:policy
 //   LATTICE=<lattice-node>/.build/debug/lattice node e2e/riposte.mjs
@@ -31,6 +34,7 @@ import { transaction } from "../src/wallet.mjs";
 
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 const RIPOSTE = ["Nexus", "riposte"];
+const POST = "https://blog.example.com/posts/hello-world/";
 const [listen, rpc, publicRead, sponsorPort] = [25071, 29420, 29421, 29422];
 const node = `http://127.0.0.1:${publicRead}`;
 const sponsorURL = `http://127.0.0.1:${sponsorPort}`;
@@ -120,16 +124,18 @@ function* shares(work) {
 const clients = new Map(); // account → the sponsor's token for it
 let sharesGround = 0;
 /** `draft` (fee 0, one signer) with the sponsor's fee debit and signature, earned with work first when the credit is short. */
-async function sponsored(who, draft) {
+async function sponsored(who, draft, fund) {
   const toWire = (body) => sdk.transactionPayload({}, body).transaction.body;
   const fromWire = (body) => ({ ...body, accountActions: body.accountActions.map((a) => ({ owner: a.owner, delta: BigInt(a.delta) })), nonce: BigInt(body.nonce) });
   const sign = async () => {
-    const answer = await ask("sponsor", { client: clients.get(who.address), transaction: { signatures: {}, body: toWire(draft) } });
+    // `fund`: the site's prefixes, for a sponsor with a fund for it; others ignore it.
+    const answer = await ask("sponsor", { client: clients.get(who.address), transaction: { signatures: {}, body: toWire(draft) }, ...(fund && { fund }) });
     const body = fromWire(answer.transaction.body);
     // Only the sponsor's debit and signature added.
     assert.deepEqual(body.signers, [who.address, sponsor.address]);
     assert.deepEqual(body.actions, draft.actions);
-    assert.ok(body.accountActions.every((a) => a.owner === sponsor.address && a.delta < 0n));
+    assert.deepEqual(body.accountActions.slice(0, draft.accountActions.length), draft.accountActions);
+    assert.ok(body.accountActions.slice(draft.accountActions.length).every((a) => a.owner === sponsor.address && a.delta < 0n));
     return { body, signatures: answer.transaction.signatures };
   };
   for (let round = 0; ; round++) {
@@ -171,13 +177,13 @@ async function sponsored(who, draft) {
   }
 }
 
-/** `actions` on `chain` by `who`, its fee paid by the sponsor; the node's answer. */
-async function send(chain, who, { actions }) {
+/** `actions` (and `payments`, from `who`'s coins) on `chain` by `who`, its fee paid by the sponsor; the node's answer. */
+async function send(chain, who, { actions, payments, fund }) {
   const n = await nonce(chain, who);
-  const draft = transaction({ owner: who.address, actions, nonce: n, chainPath: chain });
+  const draft = transaction({ owner: who.address, actions, payments, nonce: n, chainPath: chain });
   let result;
   try {
-    const { body, signatures } = await sponsored(who, draft);
+    const { body, signatures } = await sponsored(who, draft, fund);
     const { publicKey, signature } = sdk.signTransactionBody(body, who.privateKey);
     result = await submit({ ...signatures, [publicKey]: signature }, body);
   } catch (error) {
@@ -222,13 +228,15 @@ const walletOf = (who) => ({
   address: async () => who.address,
   writeRecords: async (request) => {
     assert.equal(request.fee, undefined, "the app leaves the fee to the wallet");
-    const result = await send(request.chainPath, who, request);
+    // Payments (tips) come from coins only: no sponsor buys a shortfall with work here.
+    if (request.payments) assert.equal(request.coinOnly, true, "a payment asks for coins only");
+    const result = await send(request.chainPath, who, request); // actions, payments and fund
     if (!result.ok) throw new Error(`${result.status} ${result.text}`);
     return { transactionCID: "sent" };
   },
 });
 
-const [alice, bob, mod] = [account(), account(), account()];
+const [alice, bob, mod, patron] = [account(), account(), account(), account()];
 
 const as = (who) => ({ wallet: walletOf(who) });
 
@@ -268,8 +276,9 @@ async function keep(page) {
       response.writeHead(404).end();
     }
   }).listen(port, "127.0.0.1");
-  const query = `node=${encodeURIComponent(node)}&chain=${RIPOSTE.join("/")}&sponsor=${encodeURIComponent(sponsorURL)}&moderators=${mod.address}&page=${encodeURIComponent(r.pageName("https://blog.example.com/posts/hello-world/"))}`;
-  writeFileSync(`${root}/keep.json`, JSON.stringify({ demo: `http://127.0.0.1:${port}/demo/?${query}`, node, chain: RIPOSTE.join("/"), sponsor: sponsorURL, alice: alice.address, bob: bob.address, mod: mod.address }));
+  // The demo shows the blog post's thread, as an embed on the post would.
+  const query = `node=${encodeURIComponent(node)}&chain=${RIPOSTE.join("/")}&sponsor=${encodeURIComponent(sponsorURL)}&moderators=${mod.address}&url=${encodeURIComponent(POST)}`;
+  writeFileSync(`${root}/keep.json`, JSON.stringify({ demo: `http://127.0.0.1:${port}/demo/?${query}`, home: `http://127.0.0.1:${port}/`, post: POST, node, chain: RIPOSTE.join("/"), sponsor: sponsorURL, sponsorKey: `${root}/sponsor-key.json`, alice: alice.address, bob: bob.address, mod: mod.address }));
   console.log(`KEEP ${root}/keep.json`);
   console.log(`demo: http://127.0.0.1:${port}/demo/?${query}`);
   await new Promise(() => {});
@@ -319,9 +328,15 @@ try {
   await until("the sponsor prices Riposte", async () => (await ask("work", { chain: RIPOSTE.join("/") }), true), 120);
   console.log(`Riposte launched; the sponsor (${sponsor.address.slice(-6)}) pays fees for work`);
 
-  const page = await riposte.page("https://blog.example.com/posts/hello-world/");
-  const elsewhere = await riposte.page({ name: "blog.example.com/posts/another" });
+  const page = await riposte.page(POST);
+  const elsewhere = await riposte.page({ name: "blog.example.com/posts/another", site: "blog.example.com" });
   assert.equal(page.key, (await riposte.page("http://www.blog.example.com/posts/hello-world?ref=hn#comments")).key);
+  // Any address's thread (discuss/?url=) is the one an embed at that address shows: the
+  // widget there keys the page by its own address, the discuss page by the one it's given.
+  assert.equal(page.key, await r.pageKey(new URL(POST).host, r.pageName(POST)));
+  assert.equal((await riposte.page({ name: r.pageName(POST), site: "www.blog.example.com" })).key, page.key);
+  assert.notEqual((await riposte.page(POST.replace("blog.example.com", "blog.example.org"))).key.slice(0, 16), page.site);
+  assert.deepEqual(page.fund, [`comment/${page.site}`, `like/${page.site}`, `tip/${page.site}`]);
 
   // ------------------------------------------------------------ commenting with no coins
   const free = await sendFree(RIPOSTE, alice, r.comment(page.key, alice.address, { text: "free?" }));
@@ -359,6 +374,12 @@ try {
   assert.equal((await page.comments()).length, 3, "a mark deletes nothing");
   await page.block(alice.address, as(mod), false);
   await until("the unblock lands", async () => (await page.hidden([mod.address])).accounts.size === 0);
+  // The moderator mutes Bob for themselves: their own mark, not a block on their pages.
+  await page.mute(bob.address, as(mod));
+  await until("the mute lands", async () => (await page.muted(mod.address)).has(bob.address));
+  assert.equal((await page.hidden([mod.address])).accounts.size, 0, "a mute is no block");
+  await page.mute(bob.address, as(mod), false);
+  await until("the unmute lands", async () => (await page.muted(mod.address)).size === 0);
   console.log("  the moderator hid a comment and blocked, then unblocked, an account; nothing was deleted");
 
   // ------------------------------------------------------------ what the policy refuses, fee paid or not
@@ -370,6 +391,35 @@ try {
   await refused("Bob hiding as the moderator", bob, { actions: [{ key: r.hideKey(mod.address, page.key, first), newValue: "1" }] });
   await refused("a comment over 10240 bytes", bob, { actions: [{ key: r.commentKey(page.key, bob.address, "big"), newValue: "x".repeat(10241) }] });
 
+  // ------------------------------------------------------------ tips, from coins
+  // The patron is sent coins from the sponsor's rewards, in a plain transfer the sponsor's key signs.
+  const GIFT = 20n;
+  {
+    const n = await nonce(RIPOSTE, sponsor);
+    const body = transaction({ owner: sponsor.address, actions: [], payments: [{ to: patron.address, amount: String(GIFT) }], fee: 1n, nonce: n, chainPath: RIPOSTE });
+    const { publicKey, signature } = sdk.signTransactionBody(body, Uint8Array.from(Buffer.from(sponsor.privateKey, "hex")));
+    const result = await submit({ [publicKey]: signature }, body);
+    assert.ok(result.ok, `the patron's coins: ${result.status} ${result.text}`);
+    await until("the patron's coins land", async () => (await balance(RIPOSTE, patron.address)) === GIFT);
+  }
+  const { id: tipped } = await page.tip(first, 5, as(patron));
+  await until("the tip lands", async () => (await page.comments())[0].tips.count === 1);
+  assert.deepEqual((await page.comments())[0].tips, { count: 1, total: 5n });
+  assert.equal(await balance(RIPOSTE, alice.address), 5n, "Alice was paid the tip");
+  assert.equal(await balance(RIPOSTE, patron.address), GIFT - 5n, "the tip came from the patron's coins; the sponsor paid the fee");
+  console.log(`  admitted: the patron tips Alice's comment 5 coins from their balance (${tipped})`);
+
+  await assert.rejects(page.tip(first, 1, as(bob)), (error) => error.code === "NotEnoughCoins");
+  console.log("  refused by the library: Bob, with no coins, tipping");
+  await assert.rejects(page.tip(first, 1, as(alice)), /your own comment/);
+  const tipAt = (who, tid) => r.tipKey(page.key, first, who.address, tid);
+  await refused("a tip its author isn't credited in full", patron, { actions: [{ key: tipAt(patron, "short1"), newValue: "5" }], payments: [{ to: alice.address, amount: "4" }] });
+  await refused("a tip with no payment", patron, { actions: [{ key: tipAt(patron, "short2"), newValue: "1" }] });
+  await refused("Alice tipping her own comment", alice, { actions: [{ key: tipAt(alice, "self1"), newValue: "5" }], payments: [{ to: alice.address, amount: "5" }] });
+  await refused("a tip edited after it was paid", patron, { actions: [{ key: tipAt(patron, tipped), oldValue: "5", newValue: "6" }], payments: [{ to: alice.address, amount: "6" }] });
+  assert.equal(await balance(RIPOSTE, alice.address), 5n);
+  assert.equal(await balance(RIPOSTE, patron.address), GIFT - 5n);
+
   // ------------------------------------------------------------ taking it back
   await page.remove(hello, as(alice));
   await until("the deletion is mined", async () => (await page.comments()).length === 2);
@@ -378,10 +428,11 @@ try {
   assert.deepEqual(after[0].replies.map((c) => c.id), [answer]);
   console.log("  admitted: Alice deletes her comment; Bob's reply shows its parent is gone");
 
-  for (const [name, who] of [["Alice", alice], ["Bob", bob], ["The moderator", mod]]) {
+  for (const [name, who] of [["Bob", bob], ["The moderator", mod]]) {
     assert.equal(await balance(RIPOSTE, who.address), 0n, `${name} holds coins`);
   }
-  console.log(`Alice, Bob and the moderator hold no coins; the sponsor paid every fee, for ${sharesGround} shares of work`);
+  assert.equal(await balance(RIPOSTE, alice.address), 5n, "Alice holds only her tip");
+  console.log(`Bob and the moderator hold no coins, and Alice only her tip; the sponsor paid every fee, for ${sharesGround} shares of work`);
   console.log("e2e passed");
   if (process.env.E2E_KEEP) await keep(page);
 } finally {

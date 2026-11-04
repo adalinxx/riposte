@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discuss any page · Riposte</title>
+<meta name="description" content="Comment on any web page, whether or not it has comments. The same thread an embed on that page would show.">
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<style>
+  :root { color-scheme: light dark; --bg: #fbfaf7; --fg: #1d2127; --muted: #5d6470; --line: #e4e1da; --card: #fff; --accent: #c2410c; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #14161a; --fg: #e9e6df; --muted: #a0a6b0; --line: #2b2f36; --card: #1b1e23; --accent: #fb8a4c; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  main { max-width: 720px; margin: 0 auto; padding: 20px 16px 80px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 18px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 750; color: inherit; text-decoration: none; }
+  .brand img { width: 24px; height: 24px; }
+  form.go { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+  form.go input { flex: 1 1 260px; min-width: 0; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  form.go button { font: inherit; font-weight: 650; border: 0; border-radius: 8px; padding: 8px 16px; background: var(--accent); color: #fff; cursor: pointer; }
+  @media (prefers-color-scheme: dark) { form.go button { color: #1a0f08; } }
+  .target { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 6px 0 22px; }
+  .target .label { color: var(--muted); font-size: .85em; margin: 0; }
+  .target a.out { display: block; font-weight: 650; font-size: 1.1em; overflow-wrap: anywhere; text-decoration: none; }
+  .target a.out:hover { text-decoration: underline; }
+  .muted { color: var(--muted); font-size: .92em; }
+  .bad { color: #c2410c; }
+</style>
+</head>
+<body>
+<main>
+  <header class="top"><a class="brand" href="../"><img src="../icon.svg" alt="">Riposte</a><span class="muted">Discuss any page</span></header>
+  <form class="go" action="./">
+    <input name="url" type="url" required placeholder="Paste a page's address, https://…" aria-label="Page address">
+    <button type="submit">Discuss</button>
+  </form>
+  <p class="muted" id="intro">The thread here is the one Riposte would show on that page itself, so if the site adds Riposte later, it shows these comments. Signed in, you can mute an author for yourself.</p>
+  <div id="target"></div>
+</main>
+<script type="module">
+  import { pageName } from "../src/records.mjs";
+
+  const params = new URLSearchParams(location.search);
+  const form = document.querySelector("form.go");
+  const given = params.get("url");
+  if (given) form.url.value = given;
+
+  /** The address as a page Riposte can name: http(s) only, so nothing else becomes a link here. */
+  function target(text) {
+    try {
+      const url = new URL(text.trim());
+      return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const url = given && target(given);
+  const place = document.getElementById("target");
+  if (given && !url) {
+    place.innerHTML = `<p class="bad">That isn't a web page's address. Paste one that starts with https://.</p>`;
+  } else if (url) {
+    const card = document.createElement("div");
+    card.className = "target";
+    const label = document.createElement("p");
+    label.className = "label";
+    label.textContent = "Comments on";
+    const out = document.createElement("a");
+    out.className = "out";
+    out.href = url.href;
+    out.rel = "noopener noreferrer nofollow";
+    out.target = "_blank";
+    out.textContent = `${pageName(url.href)} ↗`;
+    card.append(label, out);
+    const thread = document.createElement("div");
+    thread.id = "riposte";
+    thread.dataset.url = url.href;
+    // For testing against other hosts: ?node=, ?chain=, ?sponsor=, ?wallet=.
+    for (const name of ["chain", "nodes", "sponsor", "wallet"]) {
+      const value = params.get(name === "nodes" ? "node" : name);
+      if (value) thread.dataset[name] = value;
+    }
+    place.append(card, thread);
+    document.title = `${pageName(url.href)} · Riposte`;
+    await import("../riposte.js");
+  }
+</script>
+</body>
+</html>

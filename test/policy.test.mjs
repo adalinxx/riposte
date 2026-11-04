@@ -99,7 +99,101 @@ test("moderators mark, and only their own marks", () => {
   assert.ok(!accepts([{ key: `block/${MOD}/nobody`, newValue: "1" }], { signers: [MOD] }));
 });
 
+test("a reader mutes for themselves: their own mark, value 1", () => {
+  const mute = `mute/${ALICE}/${BOB}`;
+  assert.ok(accepts([{ key: mute, newValue: "1" }]));
+  assert.ok(accepts([{ key: mute, oldValue: "1" }]));
+  assert.ok(!accepts([{ key: mute, newValue: "yes" }]));
+  assert.ok(!accepts([{ key: mute, newValue: "1" }], { signers: [BOB] }));
+  assert.ok(!accepts([{ key: mute, oldValue: "1" }], { signers: [MOD] }));
+  assert.ok(!accepts([{ key: `mute/${ALICE}/nobody`, newValue: "1" }]));
+  assert.ok(!accepts([{ key: `mute/${ALICE}`, newValue: "1" }]));
+  assert.ok(!accepts([{ key: `mute/${ALICE}/${BOB}/x`, newValue: "1" }]));
+});
+
 test("coin actions pass untouched", () => {
   assert.ok(accepts([], { accountActions: [{ owner: ALICE, delta: -5n }, { owner: BOB, delta: 5n }] }));
   assert.ok(accepts([{ key: comment(ALICE), newValue: text("paid") }], { accountActions: [{ owner: ALICE, delta: -1n }] }));
+});
+
+// ---------------------------------------------------------------- tips
+
+const tip = (a, author = BOB, tid = "lz3k9q2a1abcd", id = ID) => `tip/${PAGE}/${author}/${id}/${a}/${tid}`;
+/** What a wallet writes for a tip: the tipper's debit, then the author's credit. */
+const paid = (from, to, amount) => [{ owner: from, delta: -BigInt(amount) }, { owner: to, delta: BigInt(amount) }];
+
+test("a tip: created by the tipper, with the author credited at least the amount", () => {
+  assert.ok(accepts([{ key: tip(ALICE), newValue: "5" }], { accountActions: paid(ALICE, BOB, 5) }));
+  // More than the amount is fine; the tip records what was promised.
+  assert.ok(accepts([{ key: tip(ALICE), newValue: "5" }], { accountActions: paid(ALICE, BOB, 7) }));
+  // Paid by work: the sponsor credits the tipper, who nets to nothing; the author is still credited.
+  assert.ok(accepts([{ key: tip(ALICE), newValue: "5" }], {
+    signers: [ALICE, MOD],
+    accountActions: [...paid(ALICE, BOB, 5), { owner: ALICE, delta: 5n }, { owner: MOD, delta: -6n }],
+  }));
+});
+
+test("a tip the author isn't credited for is refused", () => {
+  assert.ok(!accepts([{ key: tip(ALICE), newValue: "5" }]));
+  assert.ok(!accepts([{ key: tip(ALICE), newValue: "5" }], { accountActions: paid(ALICE, BOB, 4) }));
+  // Credited someone else.
+  assert.ok(!accepts([{ key: tip(ALICE), newValue: "5" }], { accountActions: paid(ALICE, MOD, 5) }));
+  // Two credits that add up don't pay one tip: one credit pays one run of tips.
+  assert.ok(!accepts([{ key: tip(ALICE), newValue: "5" }], { accountActions: [{ owner: ALICE, delta: -5n }, { owner: BOB, delta: 2n }, { owner: BOB, delta: 3n }] }));
+  // A debit of the author comes first: not a credit.
+  assert.ok(!accepts([{ key: tip(ALICE), newValue: "5" }], { accountActions: [{ owner: BOB, delta: -1n }, { owner: BOB, delta: 5n }, { owner: ALICE, delta: -4n }] }));
+});
+
+test("a self-tip, or a tip its author signs, is refused", () => {
+  assert.ok(!accepts([{ key: tip(ALICE, ALICE), newValue: "5" }], { accountActions: [{ owner: ALICE, delta: -5n }, { owner: ALICE, delta: 5n }] }));
+  // The author signing could take the credit straight back.
+  assert.ok(!accepts([{ key: tip(ALICE), newValue: "5" }], { signers: [ALICE, BOB], accountActions: [...paid(ALICE, BOB, 5), { owner: BOB, delta: -5n }, { owner: ALICE, delta: 5n }] }));
+});
+
+test("a tip is never edited or deleted", () => {
+  assert.ok(!accepts([{ key: tip(ALICE), oldValue: "5", newValue: "50" }], { accountActions: paid(ALICE, BOB, 50) }));
+  assert.ok(!accepts([{ key: tip(ALICE), oldValue: "5" }]));
+  assert.ok(!accepts([{ key: tip(ALICE), oldValue: "5" }], { accountActions: paid(ALICE, BOB, 5) }));
+});
+
+test("a tip's amount is a canonical decimal of at least 1", () => {
+  for (const amount of ["0", "05", "", "-5", "5.0", "1e3", " 5", "+5", "18446744073709551616", "five"]) {
+    assert.ok(!accepts([{ key: tip(ALICE), newValue: amount }], { accountActions: paid(ALICE, BOB, 5) }), JSON.stringify(amount));
+  }
+  assert.ok(accepts([{ key: tip(ALICE), newValue: "1" }], { accountActions: paid(ALICE, BOB, 1) }));
+});
+
+test("only the tipper signs a tip, and its key is spelled one way", () => {
+  assert.ok(!accepts([{ key: tip(ALICE), newValue: "5" }], { signers: [MOD], accountActions: paid(MOD, BOB, 5) }));
+  for (const key of [
+    `tip/${PAGE}/${BOB}/${ID}/${ALICE}`,
+    `tip/${PAGE}/${BOB}/${ID}/${ALICE}/x/y`,
+    `tip/${PAGE}/${BOB}/${ID}/${ALICE}/A`,
+    `tip/${PAGE}/${BOB}/${ID}/${ALICE}/${"a".repeat(17)}`,
+    `tip/${PAGE}/nobody/${ID}/${ALICE}/x`,
+    `tip/${PAGE.toUpperCase()}/${BOB}/${ID}/${ALICE}/x`,
+  ]) assert.ok(!accepts([{ key, newValue: "5" }], { accountActions: paid(ALICE, BOB, 5) }), key);
+});
+
+test("several tips in one write: each run of tips to an author is paid by one credit, in order", () => {
+  const two = [{ key: tip(ALICE, BOB, "a"), newValue: "2" }, { key: tip(ALICE, BOB, "b"), newValue: "3" }];
+  assert.ok(accepts(two, { accountActions: paid(ALICE, BOB, 5) }));
+  assert.ok(!accepts(two, { accountActions: paid(ALICE, BOB, 4) }));
+  // To two authors: credited in the order their tips come.
+  const both = [{ key: tip(ALICE, BOB, "a"), newValue: "2" }, { key: tip(ALICE, MOD, "b"), newValue: "3" }];
+  const credits = [{ owner: ALICE, delta: -5n }, { owner: BOB, delta: 2n }, { owner: MOD, delta: 3n }];
+  assert.ok(accepts(both, { accountActions: credits }));
+  assert.ok(!accepts(both, { accountActions: [credits[0], credits[2], credits[1]] }));
+  // Tips to one author that aren't together are two runs, and need two credits.
+  const apart = [{ key: tip(ALICE, BOB, "a"), newValue: "2" }, { key: tip(ALICE, MOD, "b"), newValue: "3" }, { key: tip(ALICE, BOB, "c"), newValue: "4" }];
+  assert.ok(!accepts(apart, { accountActions: [{ owner: ALICE, delta: -9n }, { owner: BOB, delta: 6n }, { owner: MOD, delta: 3n }] }));
+  assert.ok(accepts(apart, { accountActions: [{ owner: ALICE, delta: -9n }, { owner: BOB, delta: 2n }, { owner: MOD, delta: 3n }, { owner: BOB, delta: 4n }] }));
+});
+
+test("a tip beside comments and likes", () => {
+  assert.ok(accepts([
+    { key: comment(ALICE), newValue: text("thanks for this") },
+    { key: tip(ALICE), newValue: "1" },
+    { key: `like/${PAGE}/${BOB}/${ID}/${ALICE}`, newValue: "1" },
+  ], { accountActions: paid(ALICE, BOB, 1) }));
 });

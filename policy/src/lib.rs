@@ -9,17 +9,30 @@
 //! - `hide/<m>/<page>/<author>/<id>`: moderator `<m>` hides that comment.
 //!   Value `1`. It hides it only on pages that name `<m>` as a moderator.
 //! - `block/<m>/<a>`: moderator `<m>` hides everything `<a>` writes. Value `1`.
+//! - `mute/<a>/<muted>`: reader `<a>` hides everything `<muted>` writes, for
+//!   themselves only. Value `1`. A record of its own, so a moderator's mute
+//!   is never one of their site's blocks.
+//! - `tip/<page>/<author>/<id>/<a>/<tid>`: `<a>` tips that comment. The value
+//!   is the amount, a canonical decimal of at least 1, and the same
+//!   transaction credits `<author>` at least that much. Created once, never
+//!   edited or deleted: it records a payment. `<a>` is not `<author>`, and
+//!   `<author>` does not sign, so a tip can't net to nothing within its own
+//!   transaction and still look paid.
 //!
 //! Nothing is deleted by anyone but its writer: a moderator only marks, and
 //! each page chooses whose marks it follows. What a comment says, and whether
 //! a reply's parent exists, is for readers: the policy never reads JSON.
 //!
-//! `<a>`, `<m>` and `<author>` are account addresses; `<page>` is 1 to
-//! `MAX_PAGE` and `<id>` 1 to `MAX_ID` lowercase letters and digits. Coin
-//! actions pass untouched.
+//! `<a>`, `<m>`, `<muted>` and `<author>` are account addresses; `<page>` is 1 to
+//! `MAX_PAGE` and `<id>` and `<tid>` 1 to `MAX_ID` lowercase letters and
+//! digits. Coin actions pass untouched, beyond paying for tips.
+//!
+//! Tips are checked against the account actions in one pass (Moniker's
+//! `Payments`): consecutive tips to one author are paid by one credit to
+//! them, and each run of tips by its own credit, in the order the runs come.
 #![cfg_attr(not(test), no_std)]
 
-use lattice_policy_rules::{is_address, transaction_body, Action, Body, Signers};
+use lattice_policy_rules::{decimal, is_address, transaction_body, Action, Body, Signers};
 
 lattice_policy_rules::lattice_policy_abi!(crate::validate);
 
@@ -43,11 +56,13 @@ pub fn validate(context: &[u8], scratch: &mut [u32]) -> bool {
 enum Record<'a> {
     Comment { account: &'a [u8] },
     Marker { account: &'a [u8] },
+    Tip { account: &'a [u8], author: &'a [u8] },
 }
 
 fn check_body(bytes: &[u8], scratch: &mut [u32]) -> Option<()> {
     let body = Body::parse(bytes)?;
     let signers = body.signers(scratch)?;
+    let mut payments = body.payments()?;
     let mut actions = body.actions()?;
     while let Some(action) = actions.next() {
         let action = action?;
@@ -65,9 +80,21 @@ fn check_body(bytes: &[u8], scratch: &mut [u32]) -> Option<()> {
                 signs(&signers, account)?;
                 marker(&action)?;
             }
+            Record::Tip { account, author } => {
+                signs(&signers, account)?;
+                if signers.is_signer(author).is_some() {
+                    return None;
+                }
+                // Created only, with an amount the author is credited.
+                let (None, Some(value)) = (action.old_value, action.new_value) else {
+                    return None;
+                };
+                let amount = decimal(value).filter(|&amount| amount >= 1)?;
+                payments.owe(author, amount)?;
+            }
         }
     }
-    Some(())
+    payments.finish()
 }
 
 fn signs(signers: &Signers, account: &[u8]) -> Option<()> {
@@ -101,9 +128,18 @@ fn parse(key: &[u8]) -> Option<Record<'_>> {
             let (account, page, author, id) = (next()?, next()?, next()?, next()?);
             (is_address(account) && is_page(page) && is_address(author) && is_id(id)).then_some(Record::Marker { account })?
         }
+        b"tip" => {
+            let (page, author, id, account, tid) = (next()?, next()?, next()?, next()?, next()?);
+            (is_page(page) && is_address(author) && is_id(id) && is_address(account) && is_id(tid) && account != author)
+                .then_some(Record::Tip { account, author })?
+        }
         b"block" => {
             let (account, blocked) = (next()?, next()?);
             (is_address(account) && is_address(blocked)).then_some(Record::Marker { account })?
+        }
+        b"mute" => {
+            let (account, muted) = (next()?, next()?);
+            (is_address(account) && is_address(muted)).then_some(Record::Marker { account })?
         }
         _ => return None,
     };

@@ -34,3 +34,18 @@ test("times read as people say them", () => {
   assert.equal(count(1, "comment"), "1 comment");
   assert.equal(count(0, "comment"), "0 comments");
 });
+
+test("tips read plainly", async () => {
+  const { tipsLabel, tipCheck, TIP_AMOUNTS } = await import("../widget/text.mjs");
+  assert.equal(tipsLabel({ count: 0, total: 0n }), "");
+  assert.equal(tipsLabel({ count: 1, total: 1n }), "Tipped 1 coin");
+  assert.equal(tipsLabel({ count: 2, total: 17n }), "17 coins in 2 tips");
+  assert.deepEqual(tipCheck(5, null), { ok: false, text: "Checking your balance…" });
+  assert.ok(tipCheck(5, 5n).ok);
+  assert.match(tipCheck(5, 40n).text, /balance of 40 coins/);
+  const short = tipCheck(5, 3n);
+  assert.equal(short.ok, false);
+  assert.match(short.text, /You hold 3 coins/);
+  assert.equal(tipCheck(1, 0n).ok, false);
+  assert.ok(TIP_AMOUNTS.every((n) => Number.isSafeInteger(n) && n >= 1));
+});

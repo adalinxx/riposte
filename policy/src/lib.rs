@@ -9,6 +9,9 @@
 //! - `hide/<m>/<page>/<author>/<id>`: moderator `<m>` hides that comment.
 //!   Value `1`. It hides it only on pages that name `<m>` as a moderator.
 //! - `block/<m>/<a>`: moderator `<m>` hides everything `<a>` writes. Value `1`.
+//! - `mute/<a>/<muted>`: reader `<a>` hides everything `<muted>` writes, for
+//!   themselves only. Value `1`. A record of its own, so a moderator's mute
+//!   is never one of their site's blocks.
 //! - `tip/<page>/<author>/<id>/<a>/<tid>`: `<a>` tips that comment. The value
 //!   is the amount, a canonical decimal of at least 1, and the same
 //!   transaction credits `<author>` at least that much. Created once, never
@@ -20,7 +23,7 @@
 //! each page chooses whose marks it follows. What a comment says, and whether
 //! a reply's parent exists, is for readers: the policy never reads JSON.
 //!
-//! `<a>`, `<m>` and `<author>` are account addresses; `<page>` is 1 to
+//! `<a>`, `<m>`, `<muted>` and `<author>` are account addresses; `<page>` is 1 to
 //! `MAX_PAGE` and `<id>` and `<tid>` 1 to `MAX_ID` lowercase letters and
 //! digits. Coin actions pass untouched, beyond paying for tips.
 //!
@@ -133,6 +136,10 @@ fn parse(key: &[u8]) -> Option<Record<'_>> {
         b"block" => {
             let (account, blocked) = (next()?, next()?);
             (is_address(account) && is_address(blocked)).then_some(Record::Marker { account })?
+        }
+        b"mute" => {
+            let (account, muted) = (next()?, next()?);
+            (is_address(account) && is_address(muted)).then_some(Record::Marker { account })?
         }
         _ => return None,
     };

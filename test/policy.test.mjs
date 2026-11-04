@@ -99,6 +99,18 @@ test("moderators mark, and only their own marks", () => {
   assert.ok(!accepts([{ key: `block/${MOD}/nobody`, newValue: "1" }], { signers: [MOD] }));
 });
 
+test("a reader mutes for themselves: their own mark, value 1", () => {
+  const mute = `mute/${ALICE}/${BOB}`;
+  assert.ok(accepts([{ key: mute, newValue: "1" }]));
+  assert.ok(accepts([{ key: mute, oldValue: "1" }]));
+  assert.ok(!accepts([{ key: mute, newValue: "yes" }]));
+  assert.ok(!accepts([{ key: mute, newValue: "1" }], { signers: [BOB] }));
+  assert.ok(!accepts([{ key: mute, oldValue: "1" }], { signers: [MOD] }));
+  assert.ok(!accepts([{ key: `mute/${ALICE}/nobody`, newValue: "1" }]));
+  assert.ok(!accepts([{ key: `mute/${ALICE}`, newValue: "1" }]));
+  assert.ok(!accepts([{ key: `mute/${ALICE}/${BOB}/x`, newValue: "1" }]));
+});
+
 test("coin actions pass untouched", () => {
   assert.ok(accepts([], { accountActions: [{ owner: ALICE, delta: -5n }, { owner: BOB, delta: 5n }] }));
   assert.ok(accepts([{ key: comment(ALICE), newValue: text("paid") }], { accountActions: [{ owner: ALICE, delta: -1n }] }));

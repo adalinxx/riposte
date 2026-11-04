@@ -19,7 +19,7 @@ env:
   LATTICE_SPONSOR_REPO: 0xLattice/lattice-sponsor
   LATTICE_SPONSOR_REF: 613c3d7c7ff491117cd0f967cc2e5078a475f374
   LATTICE_WALLET_REPO: adalinxx/selfhold-wallet
-  LATTICE_WALLET_REF: 12acbec82395d26fe50722e98f0dd9564b1757f4 # a dropped write frees its nonce (selfhold-wallet#50)
+  LATTICE_WALLET_REF: f51dd424b6db72eac2a04656071c0932e7795317 # fund and coinOnly (selfhold-wallet#51, open: move to its merge commit)
 
 jobs:
   policy:

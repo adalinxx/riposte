@@ -227,10 +227,8 @@ test("a reply, a like, and a deletion", async () => {
     await expect(comment("Does this work with Hugo?").locator(".acts").first().getByRole("button", { name: "Unlike" })).toContainText("1", { timeout: 5000 });
   }).toPass({ timeout: 180_000 });
 
-  const remove = comment("adding it to my footer").getByRole("button", { name: "Delete" });
-  await remove.click();
-  await expect(remove).toHaveText("Delete?");
-  await approve(remove);
+  // One click: approving in Selfhold is the confirmation.
+  await approve(comment("adding it to my footer").getByRole("button", { name: "Delete" }));
   await expect(comment("adding it to my footer")).toHaveCount(0);
   await expect(widget().locator("h2")).toHaveText("6 comments");
 });

@@ -322,7 +322,7 @@ async function mount(element) {
           <button data-act="like" data-key="${key}" aria-pressed="${liked}" aria-label="${liked ? "Unlike" : "Like"}">♥ ${likes || ""}</button>
           ${mine ? "" : `<button data-act="tip" data-key="${key}" aria-expanded="${state.tipFor === key}">${tipSent ? "Tip sending…" : "Tip"}</button>`}
           ${tips.count ? `<span class="tipbadge">★ ${esc(tipsLabel(tips))}</span>` : ""}
-          ${mine ? `<button data-act="delete" data-key="${key}">${state.deleting === key ? "Delete?" : "Delete"}</button>` : ""}
+          ${mine ? `<button data-act="delete" data-key="${key}">Delete</button>` : ""}
           ${isMod() && !mine ? `<button data-act="hide" data-key="${key}">${state.hidden.comments.has(key) ? "Unhide" : "Hide"}</button><button data-act="block" data-key="${key}">${state.hidden.accounts.has(c.author) ? "Unblock author" : "Block author"}</button>` : ""}
           ${state.me && !mine ? `<button data-act="mute" data-key="${key}">${muted ? "Unmute author" : "Mute author"}</button>` : ""}
         </div>
@@ -632,7 +632,6 @@ async function mount(element) {
       else (state.likes.delete(key), render());
     }
     if (act === "delete") {
-      if (!confirmDelete(key)) return;
       if (await writing((how) => page.remove(to.id, how))) {
         say("Deleting… this takes a few minutes.");
         watch(() => !find(key));
@@ -647,19 +646,6 @@ async function mount(element) {
       if (await writing((how) => page.block(to.author, how, on))) watch(() => state.hidden.accounts.has(to.author) === on);
     }
   });
-
-  /**
-   * A second click on Delete confirms: no browser dialog. Which comment is
-   * asking is kept in `state`, not on the button, so a redraw between the
-   * clicks (profiles or new comments arriving) doesn't forget it.
-   */
-  function confirmDelete(key) {
-    if (state.deleting === key) return !(state.deleting = null);
-    state.deleting = key;
-    render();
-    setTimeout(() => state.deleting === key && ((state.deleting = null), render()), 4000);
-    return false;
-  }
 
   render();
   await load();

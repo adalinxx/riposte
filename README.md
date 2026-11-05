@@ -29,14 +29,14 @@ https://adalinxx.github.io/riposte/demo/ (a blog post). Both run on testnet.
   same one an embed there would show. A bookmarklet on the landing page opens
   it for the page you're on.
 
-**Names and photos come from [Moniker](https://app.moniker.bio/).** A
+**Handles and photos come from [Moniker](https://app.moniker.bio/).** A
 comment is signed by the writer's account, the same on every chain, so the
 widget looks its authors up on `Nexus/moniker`, from the same hosts, in one
-read per thread, after the thread is drawn. An author shows their verified
-`@handle`; else the name on their Moniker card, beside their short account ID
-since anyone can copy a card; else the name typed with the comment. Their
-card's photo, checked by its CID and at most 256 KB, replaces the account's
-pattern. Riposte never writes to Moniker: readers set a name and photo in the
+read per thread, after the thread is drawn. An author shows as their verified
+`@handle`, else their short account ID: never a name anyone can type, on a
+card or with a comment. Their card's photo, checked by its CID and at most
+256 KB, replaces the account's pattern, and the author links to their Moniker
+page. Riposte never writes to Moniker: readers get a handle and photo in the
 Moniker app. `vendor/moniker/` is moniker-sdk's reader.
 
 ## Install

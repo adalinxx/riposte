@@ -1,0 +1,46 @@
+name: Live
+
+# Riposte as readers meet it, every hour: the deployed hosts, fee sponsor and
+# Pages site, which the Test workflow's private stack never sees. A failure
+# fails the run, and GitHub mails the owner.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  comment:
+    name: A comment on testnet, sponsored, landed and read from ams
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: node e2e/live.mjs
+
+  pages:
+    name: The Pages site shows the guestbook
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Playwright
+        working-directory: e2e/ui
+        run: npm ci && npx playwright install --with-deps chromium
+      - working-directory: e2e/ui
+        run: node live.mjs

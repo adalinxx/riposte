@@ -11,8 +11,11 @@
 // comment and oversized comments are refused even with the fee paid. A
 // patron who holds coins tips Alice's comment from their balance; a tip whose
 // author isn't credited, a self-tip, and a tip past the tipper's balance are
-// refused. Then Alice deletes her comment and Bob's reply shows its parent
-// is gone.
+// refused. The blog lends the sponsor float: it sends the sponsor coins and
+// claims them for its site's fund, and Bob's next comment there is held
+// against that deposit; a claim signed by another key is refused, and a
+// sponsor that sponsors funded sites only refuses a site with no fund. Then
+// Alice deletes her comment and Bob's reply shows its parent is gone.
 //
 //   npm run build:policy
 //   LATTICE=<lattice-node>/.build/debug/lattice node e2e/riposte.mjs
@@ -102,8 +105,8 @@ async function submit(signatures, body) {
 
 // ---------------------------------------------------------------- the fee sponsor, as a wallet uses it
 
-async function ask(path, body) {
-  const response = await fetch(`${sponsorURL}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+async function ask(path, body, at = sponsorURL) {
+  const response = await fetch(`${at}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const text = await response.text();
   if (!response.ok) throw Object.assign(new Error(`${path}: ${response.status} ${text}`), { status: response.status });
   return JSON.parse(text);
@@ -121,15 +124,16 @@ function* shares(work) {
   }
 }
 
-const clients = new Map(); // account → the sponsor's token for it
+const clients = new Map(); // "<sponsor> <account>" → that sponsor's token for the account
 let sharesGround = 0;
 /** `draft` (fee 0, one signer) with the sponsor's fee debit and signature, earned with work first when the credit is short. */
-async function sponsored(who, draft, fund) {
+async function sponsored(who, draft, fund, at = sponsorURL) {
+  const client = `${at} ${who.address}`;
   const toWire = (body) => sdk.transactionPayload({}, body).transaction.body;
   const fromWire = (body) => ({ ...body, accountActions: body.accountActions.map((a) => ({ owner: a.owner, delta: BigInt(a.delta) })), nonce: BigInt(body.nonce) });
   const sign = async () => {
     // `fund`: the site's prefixes, for a sponsor with a fund for it; others ignore it.
-    const answer = await ask("sponsor", { client: clients.get(who.address), transaction: { signatures: {}, body: toWire(draft) }, ...(fund && { fund }) });
+    const answer = await ask("sponsor", { client: clients.get(client), transaction: { signatures: {}, body: toWire(draft) }, ...(fund && { fund }) }, at);
     const body = fromWire(answer.transaction.body);
     // Only the sponsor's debit and signature added.
     assert.deepEqual(body.signers, [who.address, sponsor.address]);
@@ -139,33 +143,34 @@ async function sponsored(who, draft, fund) {
     return { body, signatures: answer.transaction.signatures };
   };
   for (let round = 0; ; round++) {
-    if (clients.has(who.address)) {
+    if (clients.has(client)) {
       try {
         return await sign();
       } catch (error) {
-        if (error.status === 400 && /client token/.test(error.message)) clients.delete(who.address);
-        else if (error.status !== 402) throw error;
+        if (error.status === 400 && /client token/.test(error.message)) clients.delete(client);
+        // 402 is credit short of the fee, unless no fund backs the draft for a --funded-only sponsor.
+        else if (error.status !== 402 || /notFunded/.test(error.message)) throw error;
       }
     }
     if (round > 20) throw new Error("the sponsor took none of this work");
     let work;
     try {
-      work = await ask("work", { ...(clients.has(who.address) && { client: clients.get(who.address) }), chain: draft.chainPath.join("/") });
+      work = await ask("work", { ...(clients.has(client) && { client: clients.get(client) }), chain: draft.chainPath.join("/") }, at);
     } catch (error) {
       // A token the sponsor no longer knows: start over with a new one, as Selfhold does.
       if (error.status === 400 && /client token/.test(error.message)) {
-        clients.delete(who.address);
+        clients.delete(client);
         continue;
       }
       if (error.status !== 503) throw error;
       await new Promise((resolve) => setTimeout(resolve, 2000));
       continue;
     }
-    clients.set(who.address, work.client);
+    clients.set(client, work.client);
     let found = 0;
     for (const nonce of shares(work)) {
       try {
-        const { credit } = await ask("shares", { assignment: work.assignment, nonce: String(nonce) });
+        const { credit } = await ask("shares", { assignment: work.assignment, nonce: String(nonce) }, at);
         sharesGround++;
         if (BigInt(credit) >= BigInt(work.fee) || ++found >= Number(work.sharesForFee)) break;
       } catch (error) {
@@ -284,9 +289,10 @@ async function keep(page) {
   await new Promise(() => {});
 }
 
-let sponsor, sponsorChild;
+let sponsor, sponsorChild, strictChild;
 function stop() {
   sponsorChild?.kill();
+  strictChild?.kill();
   try {
     lattice("mine", "stop");
   } catch {}
@@ -321,10 +327,13 @@ try {
   await mine();
   await until("the sponsor's first coins", async () => (await balance(RIPOSTE, sponsor.address)) > 10n);
   const log = openSync(`${root}/sponsor.log`, "a");
-  sponsorChild = spawn(process.env.LATTICE_SPONSOR || join(dirname(process.env.LATTICE), "lattice-sponsor"), [
+  // --funds: a site may lend it float (see "a site's fund" below). Its funds and claims are kept beside --storage-file.
+  const sponsorArgs = [
     "--node", `http://127.0.0.1:${rpc}`, "--cookie-file", `${root}/chains/Nexus/.cookie`, "--key", keyFile,
-    "--share-work", "2^12", "--fee", "1", "--port", String(sponsorPort),
-  ], { stdio: ["ignore", log, log] });
+    "--share-work", "2^12", "--fee", "1", "--funds", "--storage-file", `${root}/sponsor-storage.json`,
+  ];
+  const sponsorBinary = process.env.LATTICE_SPONSOR || join(dirname(process.env.LATTICE), "lattice-sponsor");
+  sponsorChild = spawn(sponsorBinary, [...sponsorArgs, "--port", String(sponsorPort)], { stdio: ["ignore", log, log] });
   await until("the sponsor prices Riposte", async () => (await ask("work", { chain: RIPOSTE.join("/") }), true), 120);
   console.log(`Riposte launched; the sponsor (${sponsor.address.slice(-6)}) pays fees for work`);
 
@@ -419,6 +428,82 @@ try {
   await refused("a tip edited after it was paid", patron, { actions: [{ key: tipAt(patron, tipped), oldValue: "5", newValue: "6" }], payments: [{ to: alice.address, amount: "6" }] });
   assert.equal(await balance(RIPOSTE, alice.address), 5n);
   assert.equal(await balance(RIPOSTE, patron.address), GIFT - 5n);
+
+  // ------------------------------------------------------------ a site's fund at the sponsor
+  // The blog sends the sponsor coins, which the sponsor gave it first, and claims them for its site's fund.
+  const blog = account();
+  const fundState = async (fund) => {
+    const response = await fetch(`${sponsorURL}/fund?chain=${RIPOSTE.join("/")}&${fund.map((p) => `prefix=${encodeURIComponent(p)}`).join("&")}`);
+    assert.ok(response.ok, `GET /fund: ${response.status}`);
+    const { deposit, held } = await response.json();
+    return { deposit: BigInt(deposit), held: BigInt(held) };
+  };
+  assert.equal((await (await fetch(`${sponsorURL}/terms`)).json()).fundTo, sponsor.address, "deposits go to the sponsor's own address");
+  assert.deepEqual(await fundState(page.fund), { deposit: 0n, held: 0n });
+  const DEPOSIT = 10n;
+  {
+    const n = await nonce(RIPOSTE, sponsor);
+    const body = transaction({ owner: sponsor.address, actions: [], payments: [{ to: blog.address, amount: String(DEPOSIT + 1n) }], fee: 1n, nonce: n, chainPath: RIPOSTE });
+    const { publicKey, signature } = sdk.signTransactionBody(body, Uint8Array.from(Buffer.from(sponsor.privateKey, "hex")));
+    const result = await submit({ [publicKey]: signature }, body);
+    assert.ok(result.ok, `the blog's coins: ${result.status} ${result.text}`);
+    await until("the blog's coins land", async () => (await balance(RIPOSTE, blog.address)) === DEPOSIT + 1n);
+  }
+  let depositCID;
+  {
+    const n = await nonce(RIPOSTE, blog);
+    const body = transaction({ owner: blog.address, actions: [], payments: [{ to: sponsor.address, amount: String(DEPOSIT) }], fee: 1n, nonce: n, chainPath: RIPOSTE });
+    const { publicKey, signature } = sdk.signTransactionBody(body, blog.privateKey);
+    const result = await submit({ [publicKey]: signature }, body);
+    assert.ok(result.ok, `the deposit: ${result.status} ${result.text}`);
+    depositCID = JSON.parse(result.text).transactionCID;
+  }
+  // The claim, signed by one of the transfer's signers over the chain, the transfer and the fund's prefixes (sorted, as page.fund is).
+  const claim = `lattice-sponsor-pay-fund:v1:${RIPOSTE.join("/")}:${depositCID}:${page.fund.join("\n")}`;
+  const pay = (key) => ask("pay", { chain: RIPOSTE.join("/"), txCID: depositCID, signer: blog.address, signature: sdk.signPreimage(claim, key), fund: page.fund });
+  // Until the transfer is deep enough the sponsor answers notIncluded or notDeepEnough; then a claim signed by Bob is refused.
+  const forged = await until("the deposit is deep enough to claim", async () => {
+    try {
+      await pay(bob.privateKey);
+      return { status: 200, message: "admitted" };
+    } catch (error) {
+      if (/notIncluded|notDeepEnough/.test(error.message)) return false;
+      return error;
+    }
+  });
+  assert.equal(forged.status, 400, `a claim signed by another key: ${forged.message}`);
+  assert.match(forged.message, /invalidSignature/);
+  console.log("  refused: claiming the blog's deposit with another key's signature");
+  assert.equal(BigInt((await pay(blog.privateKey)).deposit), DEPOSIT);
+  assert.deepEqual(await fundState(page.fund), { deposit: DEPOSIT, held: 0n });
+  await assert.rejects(pay(blog.privateKey), (error) => error.status === 409);
+  console.log(`  admitted: the blog claims its ${DEPOSIT}-coin deposit for its site's fund, once`);
+
+  // Bob, who holds no coins, comments on another of the blog's posts: the sponsor holds the fee against the blog's fund.
+  assert.deepEqual(elsewhere.fund, page.fund, "one fund for the whole site");
+  await elsewhere.comment({ text: "Thanks for keeping comments open." }, as(bob));
+  const backed = await fundState(page.fund);
+  assert.equal(backed.deposit, DEPOSIT);
+  assert.ok(backed.held > 0n && backed.held <= DEPOSIT, `the fund holds ${backed.held} of ${DEPOSIT}`);
+  await until("Bob's funded comment lands", async () => (await elsewhere.comments()).length === 1);
+  assert.equal(await balance(RIPOSTE, bob.address), 0n, "Bob paid for his comment in work");
+  console.log(`  admitted: Bob's comment on the blog, its fee held against the blog's fund (${backed.held} of ${DEPOSIT})`);
+
+  // A sponsor run --funded-only, keeping the same deposits, sponsors the blog and refuses a site with no fund.
+  const strictURL = `http://127.0.0.1:${sponsorPort + 1}`;
+  strictChild = spawn(sponsorBinary, [...sponsorArgs, "--funded-only", "--port", String(sponsorPort + 1)], { stdio: ["ignore", log, log] });
+  await until("the funded-only sponsor prices Riposte", async () => (await ask("work", { chain: RIPOSTE.join("/") }, strictURL), true), 120);
+  const unfunded = await riposte.page("https://unfunded.example.net/posts/1");
+  /** Bob's comment on `on`, co-signed by the funded-only sponsor; only asked for, never sent. */
+  const strictly = async (on) => {
+    const n = await nonce(RIPOSTE, bob);
+    unuse(RIPOSTE, bob, n);
+    return sponsored(bob, transaction({ owner: bob.address, actions: r.comment(on.key, bob.address, { text: "hi" }).actions, nonce: n, chainPath: RIPOSTE }), on.fund, strictURL);
+  };
+  await assert.rejects(strictly(unfunded), (error) => error.status === 402 && /notFunded/.test(error.message));
+  console.log("  refused by a funded-only sponsor: a comment on a site with no fund");
+  assert.equal(Object.keys((await strictly(page)).signatures).length, 1);
+  console.log("  admitted by a funded-only sponsor: a comment on the blog, which has a fund");
 
   // ------------------------------------------------------------ taking it back
   await page.remove(hello, as(alice));

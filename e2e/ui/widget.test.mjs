@@ -9,7 +9,8 @@
 // shows the post's thread from its address alone, and a reader mutes an
 // author there, for themselves only: where they moderate, nobody else's view
 // changes. Grace shows the @handle and photo she chose on Moniker; Ada, who
-// has none there, shows as before.
+// has none there, shows her short account ID. A name typed with a comment is
+// never shown, and each author links to their Moniker page.
 //
 //   LATTICE=<lattice-node>/.build/debug/lattice \
 //   LATTICE_WALLET_WEB=<selfhold-wallet>/dist-web node --test e2e/ui/widget.test.mjs
@@ -163,15 +164,18 @@ const balance = async (address) => {
 test("a reader with no coins signs in with a passkey and comments", async () => {
   await page.goto(demo());
   await expect(widget().locator("h2")).toHaveText("5 comments");
-  // Grace's @handle and photo, from Moniker; the name she typed gives way to them.
+  // Grace's @handle and photo, from Moniker, linking to her handle's page; the name she typed is never shown.
   const grace = comment("Does this work with Hugo?");
   await expect(grace.locator(".meta .name").first()).toHaveText("@grace");
+  await expect(grace.locator(".meta .name").first()).toHaveAttribute("href", "https://app.moniker.bio/#/@grace");
   const photo = grace.locator(".avatar").first().locator("img");
   await expect(photo).toHaveAttribute("src", /^blob:/);
   await expect.poll(() => photo.evaluate((img) => img.naturalWidth)).toBe(64);
-  // Ada has nothing on Moniker: the name she typed, and her account's pattern.
+  // Ada has nothing on Moniker: her short account ID (not the name she typed), her
+  // account's pattern, and a link to her account's Moniker page.
   const ada = comment("one <script> tag");
-  await expect(ada.locator(".meta .name")).toHaveText("Ada");
+  await expect(ada.locator(".meta .name")).toHaveText(/^[a-z2-7]{4}…[a-z2-7]{6}$/);
+  await expect(ada.locator(".meta .name")).toHaveAttribute("href", /^https:\/\/app\.moniker\.bio\/#\/account\/bafyrei/);
   await expect(ada.locator(".avatar svg")).toHaveCount(1);
   await expect(ada.locator(".avatar img")).toHaveCount(0);
   // Moderated: the spam is folded away for a reader.
@@ -179,7 +183,6 @@ test("a reader with no coins signs in with a passkey and comments", async () => 
   await expect(widget()).not.toContainText("BUY CHEAP WATCHES");
 
   await widget().getByLabel("Comment", { exact: true }).fill("First time here. Does it work with Astro too?");
-  await widget().getByLabel("Your name").fill("Lin");
   const opened = await inSelfhold(widget().getByRole("button", { name: "Sign in to post" }));
   await opened.getByRole("button", { name: "Create an account" }).click();
   await opened.getByRole("button", { name: "Connect", exact: true }).click();
@@ -187,10 +190,10 @@ test("a reader with no coins signs in with a passkey and comments", async () => 
   await expect(widget().locator(".status")).toHaveText("Signed in. Press Post to send your comment.");
   // The draft survived signing in.
   await expect(widget().getByLabel("Comment", { exact: true })).toHaveValue("First time here. Does it work with Astro too?");
-  await expect(widget().locator(".who b")).toHaveText("Lin");
-  // No handle on Moniker: the name stays changeable here, and Moniker is a link away.
-  await expect(widget().getByRole("button", { name: "Change name" })).toBeVisible();
-  await expect(widget().getByRole("link", { name: "Set your name and photo" })).toHaveAttribute("href", "https://app.moniker.bio/");
+  // No handle on Moniker: shown as the short account ID, with no name to type, and Moniker a link away.
+  await expect(widget().locator(".who b")).toHaveText(/^[a-z2-7]{4}…[a-z2-7]{6}$/);
+  await expect(widget().getByLabel("Your name")).toHaveCount(0);
+  await expect(widget().getByRole("link", { name: "Get a handle and photo" })).toHaveAttribute("href", "https://app.moniker.bio/");
   reader = await page.evaluate(() => Object.entries(localStorage).find(([k]) => k.startsWith("selfhold.web.address"))?.[1]);
   assert.ok(reader?.startsWith("bafyrei"), "signed in");
 
@@ -199,7 +202,7 @@ test("a reader with no coins signs in with a passkey and comments", async () => 
   await expect(comment("Does it work with Astro too?")).toHaveClass(/pending/, { timeout: 60_000 });
   await expect(comment("Does it work with Astro too?")).not.toHaveClass(/pending/);
   await expect(widget().locator("h2")).toHaveText("6 comments");
-  await expect(comment("Does it work with Astro too?").locator(".meta")).toContainText("Lin");
+  await expect(comment("Does it work with Astro too?").locator(".meta .name")).toHaveAttribute("href", `https://app.moniker.bio/#/account/${reader}`);
   await expect(comment("Does it work with Astro too?").locator(".you")).toBeVisible();
   await expect(widget().getByLabel("Comment", { exact: true })).toHaveValue("");
   assert.equal(await balance(reader), 0n, "the reader holds no coins");

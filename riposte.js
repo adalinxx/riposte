@@ -12,15 +12,16 @@
 // Comments are read from any node serving the chain, checked by CID. A comment
 // is written through Selfhold: a passkey signs it, and the device pays its fee
 // with a few seconds of work through a fee sponsor, so nobody holds a coin.
-// Authors show the @handle and photo they chose on Moniker, read from the same hosts.
+// Authors show the @handle and photo they chose on Moniker, read from the same hosts,
+// and link to their Moniker page.
 import * as sdk from "./vendor/lattice-sdk.js";
 import { selfhold } from "./vendor/selfhold.mjs";
 import { createRiposte, DEFAULTS } from "./src/index.mjs";
 import * as records from "./src/records.mjs";
-import { accountIcon, shortAccount } from "./src/account.mjs";
+import { accountIcon } from "./src/account.mjs";
 import { TIP_AMOUNTS, ago, count, esc, renderText, tipCheck, tipsLabel } from "./widget/text.mjs";
 import { fate } from "./widget/inflight.mjs";
-import { authorName } from "./widget/author.mjs";
+import { authorName, authorURL } from "./widget/author.mjs";
 import { createMoniker } from "./vendor/moniker/index.mjs";
 
 const SPONSOR = "https://lattice-testnet-apps-iad.fly.dev:8650/sponsor";
@@ -49,7 +50,6 @@ form.compose { border: 1px solid var(--line); border-radius: 10px; padding: 10px
 form.compose:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 textarea { display: block; width: 100%; min-height: 4.5em; resize: vertical; border: 0; background: transparent; padding: 4px; outline: none; }
 .compose .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-.compose input.name { flex: 1 1 140px; min-width: 0; border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 5px 8px; }
 .compose .who { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; font-size: .9em; color: var(--muted); min-width: 0; }
 .compose .who b { color: inherit; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; font-size: inherit; }
@@ -66,8 +66,10 @@ li.c { margin: 0 0 14px; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; overflow: hidden; grid-row: span 3; background: var(--soft); }
 .avatar svg, .avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .meta { font-size: .88em; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; }
-.meta .name { color: inherit; font-weight: 650; }
-.meta .name .id { color: var(--muted); font-weight: 400; }
+.meta .name { color: inherit; font-weight: 650; text-decoration: none; }
+.meta .name:hover { text-decoration: underline; }
+.avatar-link { grid-row: span 3; display: block; }
+.avatar-link .avatar { display: block; }
 .meta .you { font-size: .85em; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 0; }
 .acts { display: flex; gap: 14px; font-size: .85em; margin-top: 4px; flex-wrap: wrap; }
@@ -187,7 +189,6 @@ async function mount(element) {
   const INFLIGHT = `riposte.inflight.${chain.join("/")}`;
   const state = {
     me: await wallet.address().catch(() => null),
-    name: store.get("riposte.name", ""),
     comments: null, // null while loading
     hidden: { comments: new Set(), accounts: new Set() },
     muted: new Set(), // authors this reader muted, for themselves
@@ -270,25 +271,23 @@ async function mount(element) {
     const photo = profiles.get(account)?.photo;
     return `<span class="avatar" aria-hidden="true">${photo ? `<img src="${esc(photo)}" alt="">` : accountIcon(account, 32)}</span>`;
   };
-  const nameOf = (c) => {
-    const p = profiles.get(c.author);
-    const { text, id } = authorName({ address: c.author, handle: p?.handle, card: p?.card, name: c.name });
-    return `<span title="${esc(c.author)}">${esc(text)}</span>${id ? ` <span class="id">${esc(id)}</span>` : ""}`;
-  };
+  // An author is their verified Moniker handle, else their short account ID,
+  // and links to their Moniker page. A name anyone can type is never shown.
+  const who = (account) => ({ address: account, handle: profiles.get(account)?.handle });
+  const nameOf = (c) => `<a class="name" href="${esc(authorURL(who(c.author)))}" target="_blank" rel="noopener" title="${esc(c.author)}">${esc(authorName(who(c.author)))}</a>`;
+  const authorAvatar = (c) => `<a class="avatar-link" href="${esc(authorURL(who(c.author)))}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">${avatar(c.author)}</a>`;
 
   function composer({ reply } = {}) {
     const me = state.me;
     const handle = me && profiles.get(me)?.handle;
-    const who = me
-      ? `<span class="who">${avatar(me).replace('class="avatar"', 'class="avatar" style="width:20px;height:20px"')}<span>as <b>${esc(handle ? `@${handle}` : state.name || shortAccount(me))}</b></span></span>`
+    const as = me
+      ? `<span class="who">${avatar(me).replace('class="avatar"', 'class="avatar" style="width:20px;height:20px"')}<span>as <b>${esc(authorName(who(me)))}</b></span></span>`
       : "";
     return `<form class="compose${reply ? " reply" : ""}" data-reply="${reply ?? ""}">
       <textarea name="text" maxlength="${records.MAX_TEXT * 2}" placeholder="${reply ? "Write a reply…" : "Join the discussion…"}" aria-label="${reply ? "Reply" : "Comment"}"></textarea>
       <div class="row">
-        ${me ? who : ""}
-        <input class="name" name="name" maxlength="${records.MAX_NAME}" placeholder="Name (optional)" aria-label="Your name" value="${esc(state.name)}" ${me ? "hidden" : ""}>
-        ${me && !handle ? `<button type="button" class="link" data-act="rename">Change name</button>` : ""}
-        ${me && !reply ? `<a class="link" href="${MONIKER_APP}" target="_blank" rel="noopener">Set your name and photo</a>` : ""}
+        ${me ? as : ""}
+        ${me && !reply ? `<a class="link" href="${MONIKER_APP}" target="_blank" rel="noopener">${handle ? "Change your handle or photo" : "Get a handle and photo"}</a>` : ""}
         ${reply ? `<button type="button" class="cancel" data-act="cancel">Cancel</button>` : ""}
         <button class="post" type="submit" ${state.busy ? "disabled" : ""}>${me ? (reply ? "Reply" : "Post") : "Sign in to post"}</button>
       </div>
@@ -330,8 +329,8 @@ async function mount(element) {
         ${state.tipFor === key ? tipper(key) : ""}`;
     return `<li class="c${c.pending ? " pending" : ""}${hiddenBy ? " marked" : ""}${tips.count ? " tipped" : ""}" id="c-${c.id}">
       <div class="body">
-        ${avatar(c.author)}
-        <div class="meta" ${c.pending ? `data-state="${stale ? (c.dropped ? "Not saved: it didn't go through" : "Not saved: it may not have gone through") : esc(c.pending)}"` : ""}><span class="name">${nameOf(c)}</span>${mine ? `<span class="you">you</span>` : ""}${c.answers && depth >= DEPTH ? `<span>↪ ${c.answers.missing ? "a deleted comment" : nameOf(c.answers)}</span>` : ""}${c.pending ? "" : `<a href="#c-${c.id}" title="${esc(new Date(c.at).toLocaleString())}" style="color:inherit;text-decoration:none">${esc(ago(c.at))}</a>`}${hiddenBy ? "<span>hidden</span>" : ""}</div>
+        ${authorAvatar(c)}
+        <div class="meta" ${c.pending ? `data-state="${stale ? (c.dropped ? "Not saved: it didn't go through" : "Not saved: it may not have gone through") : esc(c.pending)}"` : ""}>${nameOf(c)}${mine ? `<span class="you">you</span>` : ""}${c.answers && depth >= DEPTH ? `<span>↪ ${c.answers.missing ? "a deleted comment" : nameOf(c.answers)}</span>` : ""}${c.pending ? "" : `<a href="#c-${c.id}" title="${esc(new Date(c.at).toLocaleString())}" style="color:inherit;text-decoration:none">${esc(ago(c.at))}</a>`}${hiddenBy ? "<span>hidden</span>" : ""}</div>
         <div class="text">${renderText(c.text)}</div>
         ${acts}
       </div>
@@ -374,7 +373,7 @@ async function mount(element) {
 
   function render() {
     // Keep what the person is typing across a redraw.
-    const drafts = [...view.querySelectorAll("form.compose")].map((f) => [f.dataset.reply, f.text.value, f.name?.value, f.contains(root.activeElement) ? root.activeElement.name : null]);
+    const drafts = [...view.querySelectorAll("form.compose")].map((f) => [f.dataset.reply, f.text.value, f.contains(root.activeElement) ? root.activeElement.name : null]);
     const total = state.comments ? state.comments.filter((c) => !c.missing).length + state.pending.length : 0;
     let body;
     if (state.comments === null) body = state.error ? `<p class="empty">Comments couldn't load: no host is answering. <button class="link" data-act="retry">Try again</button></p>` : `<p class="loading">Loading comments…</p>`;
@@ -389,11 +388,10 @@ async function mount(element) {
       ${composer()}
       ${body}
       <div class="foot"><span><a href="${HOME}" target="_blank" rel="noopener">Riposte</a>: comments with no accounts, ads or tracking</span>${state.me ? `<span>${isMod() ? "Moderating · " : ""}<button class="link" data-act="signout">Sign out</button></span>` : moderators.length ? `<button class="link" data-act="signin">Moderator sign-in</button>` : ""}</div>`;
-    for (const [reply, text, name, focused] of drafts) {
+    for (const [reply, text, focused] of drafts) {
       const form = view.querySelector(`form.compose[data-reply="${reply ?? ""}"]`);
       if (!form) continue;
       form.text.value = text;
-      if (form.name && name !== undefined) form.name.value = name;
       if (focused) form[focused]?.focus();
     }
   }
@@ -505,10 +503,6 @@ async function mount(element) {
   async function submit(form) {
     const text = form.text.value;
     const reply = form.dataset.reply || null;
-    if (form.name && !form.name.hidden) {
-      state.name = form.name.value.trim();
-      store.set("riposte.name", state.name || undefined);
-    }
     if (!text.trim()) return form.text.focus();
     if (!state.me) {
       // A first comment: Selfhold makes or picks an account; then Post sends it.
@@ -517,13 +511,13 @@ async function mount(element) {
     }
     let draft;
     try {
-      draft = records.comment(page.key, state.me, { text, name: state.name, ...(reply && { reply: refOf(reply) }) });
+      draft = records.comment(page.key, state.me, { text, ...(reply && { reply: refOf(reply) }) });
     } catch (error) {
       return say(error.message, true);
     }
     const id = draft.id;
     const ok = await writing(async (how) => {
-      return page.comment({ id, text, name: state.name, ...(reply && { reply: refOf(reply) }) }, how);
+      return page.comment({ id, text, ...(reply && { reply: refOf(reply) }) }, how);
     });
     if (!ok) return;
     // Shown at once, as saving, until it is in a block.
@@ -541,7 +535,7 @@ async function mount(element) {
   async function resend(key) {
     const p = state.pending.find((x) => keyOf(x) === key);
     if (!p || p.author !== state.me) return say("Sign in as the account that wrote it to retry.", true);
-    const ok = await writing((how) => page.comment({ id: p.id, text: p.text, name: p.name, ...(p.reply && { reply: p.reply }) }, how));
+    const ok = await writing((how) => page.comment({ id: p.id, text: p.text, ...(p.reply && { reply: p.reply }) }, how));
     if (!ok) return;
     p.sentAt = Date.now();
     p.cid = state.inflight?.cid;
@@ -583,14 +577,6 @@ async function mount(element) {
       await wallet.disconnect();
       state.me = null;
       return render();
-    }
-    if (act === "rename") {
-      const form = button.closest("form");
-      form.name.hidden = false;
-      form.name.focus();
-      button.hidden = true;
-      form.querySelector(".who")?.remove();
-      return;
     }
     if (act === "cancel") return ((state.replyTo = null), render());
     if (act === "tip-cancel") return ((state.tipFor = null), render());

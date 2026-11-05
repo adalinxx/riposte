@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
 import * as sdk from "../vendor/lattice-sdk.js";
 import { createMoniker } from "../vendor/moniker/index.mjs";
+import { shortAccount } from "../src/account.mjs";
 import { authorName } from "../widget/author.mjs";
 import { createRiposte } from "../src/index.mjs";
 import * as r from "../src/records.mjs";
@@ -575,8 +576,9 @@ try {
   assert.deepEqual(handles, ["grace", undefined, undefined]);
   assert.deepEqual(cards, [{ name: "Grace Hopper", avatar: photo }, undefined, undefined]);
   assert.deepEqual((await moniker.photo(photo)).bytes, picture);
-  const shown = authors.map((address, i) => authorName({ address, handle: handles[i], card: cards[i], name: ["Grace", "Alice", undefined][i] }).text);
-  assert.deepEqual(shown, ["@grace", "Alice", authorName({ address: bob.address }).text]);
+  // Only a verified handle names an author: the card's name and a typed name never do.
+  const shown = authors.map((address, i) => authorName({ address, handle: handles[i] }));
+  assert.deepEqual(shown, ["@grace", shortAccount(alice.address), shortAccount(bob.address)]);
   console.log(`  admitted on Moniker: the moderator shows @grace, with a ${picture.length}-byte photo kept for work; a reader reads both back`);
 
   // ------------------------------------------------------------ taking it back

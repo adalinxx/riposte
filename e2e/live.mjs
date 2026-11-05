@@ -174,5 +174,5 @@ for (let deadline = Date.now() + SECOND_MINUTES * 60_000; ; ) {
   if (Date.now() > deadline) fail(`${problem}, for ${minutes(stepStarted)} min`);
   await sleep(10_000);
 }
-log(`  shown as ${JSON.stringify(authorName({ address: KNOWN, handle, card }))}, with a ${photo.bytes.length}-byte ${photo.type}`);
+log(`  shown as ${JSON.stringify(authorName({ address: KNOWN, handle }))}, with a ${photo.bytes.length}-byte ${photo.type}`);
 log(`live check passed in ${minutes(started)} min`);

@@ -1,17 +1,15 @@
-// What the widget shows for a comment's author, from Moniker and the comment.
-import { displayName } from "../vendor/moniker/records/names.mjs";
+// What the widget shows for a comment's author: Moniker's verified handle only.
 import { shortAccount } from "../src/account.mjs";
 
+const MONIKER_APP = "https://app.moniker.bio/";
+
 /**
- * The author's name: `{ text, id? }`. Their verified Moniker `handle` ("@h"),
- * else their Moniker card's name with their short account ID beside it (`id`:
- * anyone may copy a card's name), else the name given with the comment, else
- * their short account ID. Every name is cleaned as Moniker cleans a card's,
- * so only a verified handle shows with an @. Plain text: escape it to draw it.
+ * The author's name: their verified Moniker `handle` as "@h", else their short
+ * account ID. Never a name anyone can type (a card's or a comment's): only a
+ * handle is checked to be theirs. Plain text: escape it to draw it.
  */
-export function authorName({ address, handle, card, name }) {
-  if (handle) return { text: `@${handle}` };
-  const carded = displayName(card?.name);
-  if (carded) return { text: carded, id: shortAccount(address) };
-  return { text: displayName(name) ?? shortAccount(address) };
-}
+export const authorName = ({ address, handle }) => (handle ? `@${handle}` : shortAccount(address));
+
+/** The author's Moniker page: their handle's while they show one, else their account's. */
+export const authorURL = ({ address, handle }) =>
+  handle ? `${MONIKER_APP}#/@${encodeURIComponent(handle)}` : `${MONIKER_APP}#/account/${encodeURIComponent(address)}`;

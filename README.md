@@ -29,6 +29,16 @@ https://adalinxx.github.io/riposte/demo/ (a blog post). Both run on testnet.
   same one an embed there would show. A bookmarklet on the landing page opens
   it for the page you're on.
 
+**Names and photos come from [Moniker](https://app.moniker.bio/).** A
+comment is signed by the writer's account, the same on every chain, so the
+widget looks its authors up on `Nexus/moniker`, from the same hosts, in one
+read per thread, after the thread is drawn. An author shows their verified
+`@handle`; else the name on their Moniker card, beside their short account ID
+since anyone can copy a card; else the name typed with the comment. Their
+card's photo, checked by its CID and at most 256 KB, replaces the account's
+pattern. Riposte never writes to Moniker: readers set a name and photo in the
+Moniker app. `vendor/moniker/` is moniker-sdk's reader.
+
 ## Install
 
 Put the tag where comments should appear. The element may also say:
@@ -122,7 +132,8 @@ the current page.
 
 ## Layout
 
-- `riposte.js`: the widget. `widget/text.mjs` holds its text and time helpers.
+- `riposte.js`: the widget. `widget/text.mjs` holds its text and time
+  helpers, `widget/author.mjs` how it names an author.
 - `src/`: the library. `records.mjs` holds the records, `state.mjs` reads
   state by walking the trie (from Murmur), and `wallet.mjs` builds the
   wallet request with no fee.
@@ -132,7 +143,8 @@ the current page.
   built module.
 - `index.html`: the landing page. `demo/` is a blog post with the widget.
   `discuss/` shows any address's thread.
-- `vendor/`: the Lattice SDK bundled for browsers, and Selfhold's client.
+- `vendor/`: the Lattice SDK bundled for browsers, Selfhold's client, and
+  moniker-sdk's reader (`vendor/moniker/`).
 
 ## Test
 
@@ -153,8 +165,11 @@ The end-to-end test runs on a private node that takes no fee under 1, with a
 real fee sponsor beside it. Alice, Bob and a moderator never hold a coin:
 
 ```sh
-LATTICE=<lattice-node>/.build/debug/lattice node e2e/riposte.mjs
+LATTICE=<lattice-node>/.build/debug/lattice MONIKER=<moniker> node e2e/riposte.mjs
 ```
+
+The node hosts Moniker too, from a checkout of `adalinxx/moniker` (`MONIKER`,
+default `~/src/moniker`), and the moderator shows `@grace` with a photo.
 
 `E2E_KEEP=<port>` then serves this repository on `<port>` against that node.
 The browser test drives the widget on the demo post through Selfhold's window

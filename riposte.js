@@ -12,6 +12,7 @@
 // Comments are read from any node serving the chain, checked by CID. A comment
 // is written through Selfhold: a passkey signs it, and the device pays its fee
 // with a few seconds of work through a fee sponsor, so nobody holds a coin.
+// Authors show the @handle and photo they chose on Moniker, read from the same hosts.
 import * as sdk from "./vendor/lattice-sdk.js";
 import { selfhold } from "./vendor/selfhold.mjs";
 import { createRiposte, DEFAULTS } from "./src/index.mjs";
@@ -19,9 +20,12 @@ import * as records from "./src/records.mjs";
 import { accountIcon, shortAccount } from "./src/account.mjs";
 import { TIP_AMOUNTS, ago, count, esc, renderText, tipCheck, tipsLabel } from "./widget/text.mjs";
 import { fate } from "./widget/inflight.mjs";
+import { authorName } from "./widget/author.mjs";
+import { createMoniker } from "./vendor/moniker/index.mjs";
 
 const SPONSOR = "https://lattice-testnet-apps-iad.fly.dev:8650/sponsor";
 const HOME = new URL("./", import.meta.url).href;
+const MONIKER_APP = "https://app.moniker.bio/";
 const list = (text) => String(text ?? "").split(/[\s,]+/).filter(Boolean);
 
 const STYLE = `
@@ -60,9 +64,10 @@ ol ol { margin-left: 18px; padding-left: 14px; border-left: 2px solid var(--line
 li.c { margin: 0 0 14px; }
 .c > .body { display: grid; grid-template-columns: 32px 1fr; gap: 0 10px; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; overflow: hidden; grid-row: span 3; background: var(--soft); }
-.avatar svg { display: block; width: 100%; height: 100%; }
+.avatar svg, .avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .meta { font-size: .88em; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; }
 .meta .name { color: inherit; font-weight: 650; }
+.meta .name .id { color: var(--muted); font-weight: 400; }
 .meta .you { font-size: .85em; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 0; }
 .acts { display: flex; gap: 14px; font-size: .85em; margin-top: 4px; flex-wrap: wrap; }
@@ -93,6 +98,7 @@ form.reply { margin: 8px 0 4px; }
 const DEPTH = 4; // replies deeper than this sit at this depth
 const PAGE_SIZE = 50; // top-level comments shown before "Show more"
 const STALE = 20 * 60_000; // a write not read back by then probably didn't go through
+const PROFILES_KEPT = 256; // authors' Moniker profiles kept read on a page, as many as Moniker's photos
 
 /** Reads and writes localStorage without failing where it's blocked. */
 const store = {
@@ -221,28 +227,68 @@ async function mount(element) {
         if (c && c.likes.includes(state.me) === on) state.likes.delete(key);
       }
       for (const [key, total] of state.tipping) if ((comments.find((x) => keyOf(x) === key)?.tips.total ?? 0n) >= total) state.tipping.delete(key);
+      lookUp([...comments.map((c) => c.author), ...(me ? [me] : [])]);
     } catch (error) {
       state.error = error;
     }
     render();
   }
 
+  // ------------------------------------------------------------ Moniker
+
+  // Authors' handles, cards and photos, read from Moniker in one batch per
+  // thread drawn and kept for the page. The thread never waits for them: it
+  // is drawn first, and again as they arrive. Unread, an author shows as before.
+  const moniker = createMoniker({ sdk, nodes });
+  const profiles = new Map(); // account → { handle?, card?, photo? (an object URL) }, oldest first
+  const asking = new Set();
+  async function lookUp(accounts) {
+    const wanted = [...new Set(accounts)].filter((a) => !profiles.has(a) && !asking.has(a));
+    if (!wanted.length) return;
+    wanted.forEach((a) => asking.add(a));
+    try {
+      const [handles, cards] = await Promise.all([moniker.handlesOf(wanted), moniker.profiles(wanted)]);
+      const found = wanted.map((account, i) => ({ account, handle: handles[i], card: cards[i] }));
+      for (const p of found) {
+        profiles.set(p.account, p);
+        for (const old of profiles.keys()) if (profiles.size > PROFILES_KEPT) profiles.delete(old);
+      }
+      render();
+      // Each photo is checked by CID, and is a WebP, PNG or JPEG of at most 256 KB, or isn't shown.
+      const photos = await Promise.all(found.map(async (p) => p.card?.avatar && (p.photo = await moniker.photoURL(p.card.avatar))));
+      if (photos.some(Boolean)) render();
+    } catch {
+      // Moniker unread: asked again on the next load.
+    } finally {
+      wanted.forEach((a) => asking.delete(a));
+    }
+  }
+
   // ------------------------------------------------------------ drawing
 
-  const avatar = (account) => `<span class="avatar" aria-hidden="true">${accountIcon(account, 32)}</span>`;
-  const nameOf = (c) => (c.name ? esc(c.name) : `<span title="${esc(c.author)}">${esc(shortAccount(c.author))}</span>`);
+  const avatar = (account) => {
+    const photo = profiles.get(account)?.photo;
+    return `<span class="avatar" aria-hidden="true">${photo ? `<img src="${esc(photo)}" alt="">` : accountIcon(account, 32)}</span>`;
+  };
+  const nameOf = (c) => {
+    const p = profiles.get(c.author);
+    const { text, id } = authorName({ address: c.author, handle: p?.handle, card: p?.card, name: c.name });
+    return `<span title="${esc(c.author)}">${esc(text)}</span>${id ? ` <span class="id">${esc(id)}</span>` : ""}`;
+  };
 
   function composer({ reply } = {}) {
     const me = state.me;
+    const handle = me && profiles.get(me)?.handle;
     const who = me
-      ? `<span class="who">${avatar(me).replace('class="avatar"', 'class="avatar" style="width:20px;height:20px"')}<span>as <b>${esc(state.name || shortAccount(me))}</b></span></span>`
+      ? `<span class="who">${avatar(me).replace('class="avatar"', 'class="avatar" style="width:20px;height:20px"')}<span>as <b>${esc(handle ? `@${handle}` : state.name || shortAccount(me))}</b></span></span>`
       : "";
     return `<form class="compose${reply ? " reply" : ""}" data-reply="${reply ?? ""}">
       <textarea name="text" maxlength="${records.MAX_TEXT * 2}" placeholder="${reply ? "Write a reply…" : "Join the discussion…"}" aria-label="${reply ? "Reply" : "Comment"}"></textarea>
       <div class="row">
         ${me ? who : ""}
         <input class="name" name="name" maxlength="${records.MAX_NAME}" placeholder="Name (optional)" aria-label="Your name" value="${esc(state.name)}" ${me ? "hidden" : ""}>
-        ${me ? `<button type="button" class="link" data-act="rename">Change name</button>` : ""}
+        ${me && !handle ? `<button type="button" class="link" data-act="rename">Change name</button>` : ""}
+        ${me && !reply ? `<a class="link" href="${MONIKER_APP}" target="_blank" rel="noopener">Set your name and photo</a>` : ""}
         ${reply ? `<button type="button" class="cancel" data-act="cancel">Cancel</button>` : ""}
         <button class="post" type="submit" ${state.busy ? "disabled" : ""}>${me ? (reply ? "Reply" : "Post") : "Sign in to post"}</button>
       </div>
@@ -369,6 +415,7 @@ async function mount(element) {
     try {
       say("Opening Selfhold…");
       state.me = await wallet.connect();
+      lookUp([state.me]);
       say("");
     } catch (error) {
       say(walletMessage(error), true);
@@ -636,7 +683,7 @@ async function mount(element) {
   // Signed in elsewhere on this site (another tab): pick it up.
   window.addEventListener("storage", async () => {
     const me = await wallet.address().catch(() => null);
-    if (me !== state.me) ((state.me = me), render());
+    if (me !== state.me) ((state.me = me), me && lookUp([me]), render());
   });
 }
 

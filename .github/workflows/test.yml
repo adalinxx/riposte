@@ -11,13 +11,15 @@ permissions:
 
 # The other repositories these tests run against, pinned to commits the suites
 # pass on. Move a pin on purpose, in its own commit, after running the suites.
+# The node and sponsor pins match the images production runs: keep them equal
+# to the pins in 0xLattice/lattice-ops testnet-follower/Dockerfile.
 env:
   RUST_TOOLCHAIN: "1.96.0"
   NODE_VERSION: "24"
   LATTICE_NODE_REPO: 0xLattice/lattice-node
-  LATTICE_NODE_REF: 63c6eb13d0372ef891c0c68ae502a9bfb2b79944
+  LATTICE_NODE_REF: 6237c0e7d436e0c9a8cf97b88da944f197788ccd
   LATTICE_SPONSOR_REPO: 0xLattice/lattice-sponsor
-  LATTICE_SPONSOR_REF: 99c4ebea5c3ec827935e836a95ad2ce397acc472 # site funds (lattice-sponsor#11)
+  LATTICE_SPONSOR_REF: 406d60b169bfa085f1d7e4b8d86df8388d205e8d
   LATTICE_WALLET_REPO: adalinxx/selfhold-wallet
   LATTICE_WALLET_REF: 410040a8cafabaf895d279468638c922d07bb630 # fund and coinOnly (selfhold-wallet#51)
 

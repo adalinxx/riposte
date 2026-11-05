@@ -2,7 +2,9 @@
 // sponsor and the trial chain, not a private stack. A new account with no
 // coins grinds shares for the sponsor, has it price and co-sign a comment on
 // a test page, sends it to iad, waits for it to land, and reads it back from
-// ams. Each step that fails says which, and how long it was given.
+// ams. Then it reads a known account's Moniker card and photo from ams, as
+// the widget shows an author. Each step that fails says which, and how long
+// it was given.
 //
 //   node e2e/live.mjs
 //
@@ -12,6 +14,8 @@ import * as sdk from "../vendor/lattice-sdk.js";
 import { createRiposte } from "../src/index.mjs";
 import * as r from "../src/records.mjs";
 import { transaction } from "../src/wallet.mjs";
+import { createMoniker } from "../vendor/moniker/index.mjs";
+import { authorName } from "../widget/author.mjs";
 
 const NODE = "https://lattice-testnet-apps-iad.fly.dev";
 const SPONSOR = "https://lattice-testnet-apps-iad.fly.dev:8650/sponsor";
@@ -24,6 +28,8 @@ const PAGE = "adalinxx.github.io/riposte/live-check";
 const UNPRICEABLE_MINUTES = 5;
 const LAND_MINUTES = 20;
 const SECOND_MINUTES = 5;
+// An account with a card and photo on Moniker (Nexus/moniker), set in a live trial.
+const KNOWN = "bafyreihpcfcqbxecznct6ryuqfo3xbn6sakrwfos55empvx7gxec75ywyu";
 
 const started = Date.now();
 let stepStarted = started;
@@ -150,4 +156,12 @@ for (let deadline = Date.now() + SECOND_MINUTES * 60_000; ; ) {
   await sleep(10_000);
 }
 log(`  ams reads it back in ${minutes(stepStarted)} min: ${JSON.stringify(seen)}`);
+
+step("5. ams serves Moniker: a known author's card and photo");
+const moniker = createMoniker({ sdk, nodes: [SECOND], freshFor: 0 });
+const [[handle], [card]] = await Promise.all([moniker.handlesOf([KNOWN]), moniker.profiles([KNOWN])]).catch((error) => fail(`Moniker unread: ${error.message}`));
+if (card?.name !== "Live Trial" || !card.avatar) fail(`the known card reads ${JSON.stringify(card)}`);
+const photo = await moniker.photo(card.avatar).catch((error) => fail(`photo ${card.avatar} unread: ${error.message}`));
+if (!photo) fail(`photo ${card.avatar} isn't one the widget shows`);
+log(`  shown as ${JSON.stringify(authorName({ address: KNOWN, handle, card }))}, with a ${photo.bytes.length}-byte ${photo.type}`);
 log(`live check passed in ${minutes(started)} min`);

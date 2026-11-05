@@ -22,6 +22,8 @@ env:
   LATTICE_SPONSOR_REF: 406d60b169bfa085f1d7e4b8d86df8388d205e8d
   LATTICE_WALLET_REPO: adalinxx/selfhold-wallet
   LATTICE_WALLET_REF: 410040a8cafabaf895d279468638c922d07bb630 # fund and coinOnly (selfhold-wallet#51)
+  MONIKER_REPO: adalinxx/moniker
+  MONIKER_REF: 4ebc27cce63cdb9b2254fea6ef343518478bcb6f # profile cards (moniker#15), as vendor/moniker reads them
 
 jobs:
   policy:
@@ -136,6 +138,7 @@ jobs:
     env:
       LATTICE: ${{ github.workspace }}/.deps/bin/lattice
       LATTICE_WALLET_WEB: ${{ github.workspace }}/.deps/lattice-wallet/dist-web
+      MONIKER: ${{ github.workspace }}/.deps/moniker
       UI_LOGS: ${{ github.workspace }}/ui-logs
       UI_SHOT: ${{ github.workspace }}/ui-logs/failure.png
     steps:
@@ -149,6 +152,12 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
+      # Moniker's spec and policy, so the private node hosts Moniker beside Riposte.
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ env.MONIKER_REPO }}
+          ref: ${{ env.MONIKER_REF }}
+          path: .deps/moniker
 
       - if: matrix.suite == 'protocol'
         name: Riposte against a real node and fee sponsor

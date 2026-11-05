@@ -8,7 +8,8 @@
 // tip a comment from their balance and it is highlighted. The discuss page
 // shows the post's thread from its address alone, and a reader mutes an
 // author there, for themselves only: where they moderate, nobody else's view
-// changes.
+// changes. Grace shows the @handle and photo she chose on Moniker; Ada, who
+// has none there, shows as before.
 //
 //   LATTICE=<lattice-node>/.build/debug/lattice \
 //   LATTICE_WALLET_WEB=<selfhold-wallet>/dist-web node --test e2e/ui/widget.test.mjs
@@ -162,7 +163,17 @@ const balance = async (address) => {
 test("a reader with no coins signs in with a passkey and comments", async () => {
   await page.goto(demo());
   await expect(widget().locator("h2")).toHaveText("5 comments");
-  await expect(comment("Does this work with Hugo?")).toContainText("Grace");
+  // Grace's @handle and photo, from Moniker; the name she typed gives way to them.
+  const grace = comment("Does this work with Hugo?");
+  await expect(grace.locator(".meta .name").first()).toHaveText("@grace");
+  const photo = grace.locator(".avatar").first().locator("img");
+  await expect(photo).toHaveAttribute("src", /^blob:/);
+  await expect.poll(() => photo.evaluate((img) => img.naturalWidth)).toBe(64);
+  // Ada has nothing on Moniker: the name she typed, and her account's pattern.
+  const ada = comment("one <script> tag");
+  await expect(ada.locator(".meta .name")).toHaveText("Ada");
+  await expect(ada.locator(".avatar svg")).toHaveCount(1);
+  await expect(ada.locator(".avatar img")).toHaveCount(0);
   // Moderated: the spam is folded away for a reader.
   await expect(widget().locator(".hidden-note")).toHaveCount(1);
   await expect(widget()).not.toContainText("BUY CHEAP WATCHES");
@@ -177,6 +188,9 @@ test("a reader with no coins signs in with a passkey and comments", async () => 
   // The draft survived signing in.
   await expect(widget().getByLabel("Comment", { exact: true })).toHaveValue("First time here. Does it work with Astro too?");
   await expect(widget().locator(".who b")).toHaveText("Lin");
+  // No handle on Moniker: the name stays changeable here, and Moniker is a link away.
+  await expect(widget().getByRole("button", { name: "Change name" })).toBeVisible();
+  await expect(widget().getByRole("link", { name: "Set your name and photo" })).toHaveAttribute("href", "https://app.moniker.bio/");
   reader = await page.evaluate(() => Object.entries(localStorage).find(([k]) => k.startsWith("selfhold.web.address"))?.[1]);
   assert.ok(reader?.startsWith("bafyrei"), "signed in");
 
@@ -404,7 +418,8 @@ for (const [name, engine] of [["Firefox", firefox], ["WebKit", webkit]]) {
       const view = reader.locator("#riposte section.rp");
       await expect(view.locator("h2")).toHaveText(/^\d+ comments$/);
       const grace = view.locator("li.c").filter({ hasText: "Does this work with Hugo?" }).first();
-      await expect(grace).toContainText("Grace");
+      await expect(grace.locator(".meta .name").first()).toHaveText("@grace");
+      await expect(grace.locator(".avatar").first().locator("img")).toHaveAttribute("src", /^blob:/);
       // Ada's answer sits under Grace's question.
       await expect(grace.locator("ol li.c").filter({ hasText: "one <script> tag" })).toHaveCount(1);
       await expect(view.locator(".hidden-note")).toHaveCount(1);

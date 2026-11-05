@@ -17,26 +17,36 @@
 // sponsor that sponsors funded sites only refuses a site with no fund. Then
 // Alice deletes her comment and Bob's reply shows its parent is gone.
 //
-//   npm run build:policy
-//   LATTICE=<lattice-node>/.build/debug/lattice node e2e/riposte.mjs
+// The node hosts Moniker too, launched from adalinxx/moniker's spec and
+// policy: the moderator claims @grace there and puts a photo, kept by the
+// sponsor for work, on their card, and a reader reads both back by account.
 //
-// LATTICE_SPONSOR names lattice-sponsor if it isn't beside LATTICE.
+//   npm run build:policy
+//   LATTICE=<lattice-node>/.build/debug/lattice MONIKER=<moniker> node e2e/riposte.mjs
+//
+// LATTICE_SPONSOR names lattice-sponsor if it isn't beside LATTICE; it must
+// sell storage. MONIKER is a checkout of adalinxx/moniker (default ~/src/moniker).
 // E2E_KEEP=<port> then serves this repository on <port>, its demo page
 // reading this node, until interrupted.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { crc32, deflateSync } from "node:zlib";
 import * as sdk from "../vendor/lattice-sdk.js";
+import { createMoniker } from "../vendor/moniker/index.mjs";
+import { authorName } from "../widget/author.mjs";
 import { createRiposte } from "../src/index.mjs";
 import * as r from "../src/records.mjs";
 import { transaction } from "../src/wallet.mjs";
 
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 const RIPOSTE = ["Nexus", "riposte"];
+const MONIKER = ["Nexus", "moniker"];
+const monikerRepo = process.env.MONIKER ?? join(homedir(), "src/moniker");
 const POST = "https://blog.example.com/posts/hello-world/";
 const [listen, rpc, publicRead, sponsorPort] = [25071, 29420, 29421, 29422];
 const node = `http://127.0.0.1:${publicRead}`;
@@ -199,6 +209,47 @@ async function send(chain, who, { actions, payments, fund }) {
   return result;
 }
 
+/** Grinds a sponsor's work on this machine, as a page does on a device: `hash(work, found, hashed)` for moniker-sdk. */
+function hash(work, found, hashed) {
+  let stopped = false;
+  const done = (async () => {
+    let count = 0;
+    for (const nonce of shares(work)) {
+      if (stopped) return;
+      found(nonce);
+      // Let the shares go out while the hashing runs on.
+      if (++count % 4 === 0) await new Promise((resolve) => setImmediate(resolve));
+    }
+    hashed(Number(work.count));
+  })();
+  return { done, stop: () => (stopped = true) };
+}
+
+/** A `width` × `height` PNG of a soft gradient: a real picture, made here. */
+function png(width, height) {
+  const rows = Buffer.alloc((width * 3 + 1) * height);
+  for (let y = 0; y < height; y++) {
+    const row = y * (width * 3 + 1);
+    for (let x = 0; x < width; x++) {
+      const t = x / width, u = y / height;
+      rows.set([Math.round(20 + 60 * u), Math.round(120 + 100 * t), Math.round(110 + 90 * (1 - t) * (1 - u))], row + 1 + x * 3);
+    }
+  }
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc32(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return new Uint8Array(Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]));
+}
+
 /** `actions` by `who` with no fee and no sponsor, as an app that ignores fees would send them. */
 async function sendFree(chain, who, { actions }) {
   const n = await nonce(chain, who);
@@ -315,13 +366,14 @@ try {
     topology.mine = { worker: "cpu", workers: 1, batchSize: 100000 };
   });
   lattice("child", "create", RIPOSTE.join("/"), "--spec", fast(here("../chain/spec.json"), "riposte"), "--policy-module", here("../chain/riposte_policy.wasm"));
+  lattice("child", "create", MONIKER.join("/"), "--spec", fast(join(monikerRepo, "chain/spec.json"), "moniker"), "--policy-module", join(monikerRepo, "chain/moniker_policy.wasm"));
 
   // The sponsor is paid the chain's block rewards, and so holds coins there to pay fees with.
   const keyFile = `${root}/sponsor-key.json`;
   execFileSync(process.env.LATTICE, ["key", "generate", "--out", keyFile]);
   sponsor = JSON.parse(readFileSync(keyFile, "utf8"));
   configure((topology) => {
-    topology.mine.recipients = { Nexus: account().address, [RIPOSTE.join("/")]: sponsor.address };
+    topology.mine.recipients = { Nexus: account().address, [RIPOSTE.join("/")]: sponsor.address, [MONIKER.join("/")]: sponsor.address };
   });
   lattice("up");
   await mine();
@@ -333,8 +385,11 @@ try {
     "--share-work", "2^12", "--fee", "1", "--funds", "--storage-file", `${root}/sponsor-storage.json`,
   ];
   const sponsorBinary = process.env.LATTICE_SPONSOR || join(dirname(process.env.LATTICE), "lattice-sponsor");
-  sponsorChild = spawn(sponsorBinary, [...sponsorArgs, "--port", String(sponsorPort)], { stdio: ["ignore", log, log] });
+  // It also keeps Moniker's photos for work, as the testnet sponsor does.
+  const storage = ["--sell-storage", "--storage-rate", `${MONIKER.join("/")}=1000000`];
+  sponsorChild = spawn(sponsorBinary, [...sponsorArgs, ...storage, "--port", String(sponsorPort)], { stdio: ["ignore", log, log] });
   await until("the sponsor prices Riposte", async () => (await ask("work", { chain: RIPOSTE.join("/") }), true), 120);
+  await until("the sponsor prices Moniker", async () => (await ask("work", { chain: MONIKER.join("/") }), true), 120);
   console.log(`Riposte launched; the sponsor (${sponsor.address.slice(-6)}) pays fees for work`);
 
   const page = await riposte.page(POST);
@@ -505,6 +560,25 @@ try {
   assert.equal(Object.keys((await strictly(page)).signatures).length, 1);
   console.log("  admitted by a funded-only sponsor: a comment on the blog, which has a fund");
 
+  // ------------------------------------------------------------ names and photos from Moniker
+  // The moderator claims @grace and shows it, keeps a photo with the sponsor for work, and puts it on their card.
+  const monikerAs = createMoniker({ sdk, nodes: [node], freshFor: 0, sponsor: sponsorURL, hash });
+  await monikerAs.claim("grace", { show: true }, as(mod));
+  const picture = png(64, 64);
+  const { cid: photo } = await monikerAs.keepPhoto({ type: "image/png", bytes: picture });
+  await monikerAs.setProfile({ name: "Grace Hopper", avatar: photo }, as(mod));
+  // A reader with nothing cached, as the widget reads: one batch for the thread's authors.
+  const moniker = createMoniker({ sdk, nodes: [node], freshFor: 0 });
+  await until("@grace and the card land", async () => (await moniker.profile(mod.address))?.avatar === photo && (await moniker.handleOf(mod.address)) === "grace");
+  const authors = [mod.address, alice.address, bob.address];
+  const [handles, cards] = await Promise.all([moniker.handlesOf(authors), moniker.profiles(authors)]);
+  assert.deepEqual(handles, ["grace", undefined, undefined]);
+  assert.deepEqual(cards, [{ name: "Grace Hopper", avatar: photo }, undefined, undefined]);
+  assert.deepEqual((await moniker.photo(photo)).bytes, picture);
+  const shown = authors.map((address, i) => authorName({ address, handle: handles[i], card: cards[i], name: ["Grace", "Alice", undefined][i] }).text);
+  assert.deepEqual(shown, ["@grace", "Alice", authorName({ address: bob.address }).text]);
+  console.log(`  admitted on Moniker: the moderator shows @grace, with a ${picture.length}-byte photo kept for work; a reader reads both back`);
+
   // ------------------------------------------------------------ taking it back
   await page.remove(hello, as(alice));
   await until("the deletion is mined", async () => (await page.comments()).length === 2);
@@ -516,6 +590,7 @@ try {
   for (const [name, who] of [["Bob", bob], ["The moderator", mod]]) {
     assert.equal(await balance(RIPOSTE, who.address), 0n, `${name} holds coins`);
   }
+  assert.equal(await balance(MONIKER, mod.address), 0n, "The moderator holds coins on Moniker");
   assert.equal(await balance(RIPOSTE, alice.address), 5n, "Alice holds only her tip");
   console.log(`Bob and the moderator hold no coins, and Alice only her tip; the sponsor paid every fee, for ${sharesGround} shares of work`);
   console.log("e2e passed");

@@ -1,7 +1,7 @@
 // Riposte: comments for any web page, with no server, no sign-up and no coins.
 //
 //   <div id="riposte"></div>
-//   <script type="module" src="https://adalinxx.github.io/riposte/riposte.js"></script>
+//   <script type="module" src="https://riposte.page/riposte.js"></script>
 //
 // The element may say:
 //   data-page        a name for the page on this site that outlives its path (default: its host and path)

@@ -14,12 +14,13 @@
 // refused. The blog lends the sponsor float: it sends the sponsor coins and
 // claims them for its site's fund, and Bob's next comment there is held
 // against that deposit; a claim signed by another key is refused, and a
-// sponsor that sponsors funded sites only refuses a site with no fund. Both
-// sponsors restart and keep the deposits and claims. A fund backs no write
-// outside its site's keys, and readers fill a small fund's deposit: the next
-// is sponsored from the operator's own float, or refused by the funded-only
-// sponsor. Then Alice deletes her comment and Bob's reply shows its parent
-// is gone.
+// sponsor that sponsors funded sites only refuses a site with no fund. A fund
+// backs no write outside its site's keys, and readers fill a small fund's
+// deposit: the next is sponsored from the operator's own float, or refused
+// by the funded-only sponsor, which also holds one comment per reader. Both
+// sponsors restart and keep deposits, claims and holds; a held comment
+// lands and its hold ends. Then Alice deletes her comment and Bob's reply
+// shows its parent is gone.
 //
 // The node hosts Moniker too, launched from adalinxx/moniker's spec and
 // policy: the moderator claims @grace there and puts a photo, kept by the
@@ -36,7 +37,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -385,7 +386,7 @@ try {
   await mine();
   await until("the sponsor's first coins", async () => (await balance(RIPOSTE, sponsor.address)) > 10n);
   const log = openSync(`${root}/sponsor.log`, "a");
-  // --funds: a site may lend it float (see "a site's fund" below). Its funds and claims are kept beside --storage-file.
+  // --funds: a site may lend it float (see "a site's fund" below). Its funds, claims and holds are kept beside --storage-file.
   const sponsorArgs = [
     "--node", `http://127.0.0.1:${rpc}`, "--cookie-file", `${root}/chains/Nexus/.cookie`, "--key", keyFile,
     "--share-work", "2^12", "--fee", "1", "--funds", "--storage-file", `${root}/sponsor-storage.json`,
@@ -549,22 +550,9 @@ try {
   await until("Bob's funded comment lands", async () => (await elsewhere.comments()).length === 1);
   assert.equal(await balance(RIPOSTE, bob.address), 0n, "Bob paid for his comment in work");
   console.log(`  admitted: Bob's comment on the blog, its fee held against the blog's fund (${backed.held} of ${DEPOSIT})`);
-
-  // A sponsor run --funded-only, keeping the same deposits, sponsors the blog and refuses a site with no fund.
-  const strictURL = `http://127.0.0.1:${sponsorPort + 1}`;
-  strictChild = spawn(sponsorBinary, [...sponsorArgs, "--funded-only", "--port", String(sponsorPort + 1)], { stdio: ["ignore", log, log] });
-  await until("the funded-only sponsor prices Riposte", async () => (await ask("work", { chain: RIPOSTE.join("/") }, strictURL), true), 120);
-  const unfunded = await riposte.page("https://unfunded.example.net/posts/1");
-  /** Bob's comment on `on`, co-signed by the funded-only sponsor; only asked for, never sent. */
-  const strictly = async (on) => {
-    const n = await nonce(RIPOSTE, bob);
-    unuse(RIPOSTE, bob, n);
-    return sponsored(bob, transaction({ owner: bob.address, actions: r.comment(on.key, bob.address, { text: "hi" }).actions, nonce: n, chainPath: RIPOSTE }), on.fund, strictURL);
-  };
-  await assert.rejects(strictly(unfunded), (error) => error.status === 402 && /notFunded/.test(error.message));
-  console.log("  refused by a funded-only sponsor: a comment on a site with no fund");
-  assert.equal(Object.keys((await strictly(page)).signatures).length, 1);
-  console.log("  admitted by a funded-only sponsor: a comment on the blog, which has a fund");
+  // The hold ends once Bob's nonce on the chain passes it, as the sponsor sees the chain move: a block or two.
+  await until("the blog's fund releases Bob's landed comment", async () => (await fundState(page.fund)).held === 0n, 60);
+  console.log("  the blog's fund releases the hold once Bob's comment lands");
 
   // A small shop lends the sponsor a deposit of 2, sent and claimed as the blog's was.
   const shop = await riposte.page("https://shop.example.org/posts/1");
@@ -593,29 +581,28 @@ try {
     assert.equal(BigInt(claimed.deposit), SMALL);
   }
 
-  // Both sponsors restart with the same arguments. Deposits and claims are on disk; holds were in memory.
-  const restart = async (child, args) => {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill();
-      await once(child, "exit");
-    }
-    return spawn(sponsorBinary, args, { stdio: ["ignore", log, log] });
+  // A sponsor run --funded-only, keeping the same deposits, sponsors the blog and refuses a site with no fund.
+  // It keeps its holds in a directory of its own, starting from a copy of the deposits.
+  const strictURL = `http://127.0.0.1:${sponsorPort + 1}`;
+  mkdirSync(`${root}/strict`);
+  copyFileSync(`${root}/lattice-sponsor-funds.json`, `${root}/strict/lattice-sponsor-funds.json`);
+  const strictArgs = [...sponsorArgs.slice(0, -1), `${root}/strict/sponsor-storage.json`, "--funded-only", "--port", String(sponsorPort + 1)];
+  strictChild = spawn(sponsorBinary, strictArgs, { stdio: ["ignore", log, log] });
+  await until("the funded-only sponsor prices Riposte", async () => (await ask("work", { chain: RIPOSTE.join("/") }, strictURL), true), 120);
+  const unfunded = await riposte.page("https://unfunded.example.net/posts/1");
+  /** Bob's comment on `on`, co-signed by the funded-only sponsor; only asked for, never sent. */
+  const strictly = async (on) => {
+    const n = await nonce(RIPOSTE, bob);
+    unuse(RIPOSTE, bob, n);
+    return sponsored(bob, transaction({ owner: bob.address, actions: r.comment(on.key, bob.address, { text: "hi" }).actions, nonce: n, chainPath: RIPOSTE }), on.fund, strictURL);
   };
-  sponsorChild = await restart(sponsorChild, [...sponsorArgs, ...storage, "--port", String(sponsorPort)]);
-  strictChild = await restart(strictChild, [...sponsorArgs, "--funded-only", "--port", String(sponsorPort + 1)]);
-  await until("the sponsor prices Riposte again", async () => (await ask("work", { chain: RIPOSTE.join("/") }), true), 120);
-  await until("the sponsor prices Moniker again", async () => (await ask("work", { chain: MONIKER.join("/") }), true), 120);
-  await until("the funded-only sponsor prices Riposte again", async () => (await ask("work", { chain: RIPOSTE.join("/") }, strictURL), true), 120);
-  assert.equal((await fundState(page.fund)).deposit, DEPOSIT, "the blog's deposit survives a restart");
-  assert.equal((await fundState(shop.fund)).deposit, SMALL, "the shop's deposit survives a restart");
-  await assert.rejects(pay(blog.privateKey), (error) => error.status === 409 && /alreadyCredited/.test(error.message));
-  console.log("  the sponsors restarted: both deposits stand, and the blog's claimed deposit is refused again (409 alreadyCredited)");
+  await assert.rejects(strictly(unfunded), (error) => error.status === 402 && /notFunded/.test(error.message));
+  console.log("  refused by a funded-only sponsor: a comment on a site with no fund");
+  assert.equal(Object.keys((await strictly(page)).signatures).length, 1);
+  console.log("  admitted by a funded-only sponsor: a comment on the blog, which has a fund");
 
-  /** A new reader's write of `actions(address)`, co-signed by the sponsor at `at` naming `fund`: asked for, not sent. */
-  const asked = async (at, fund, actions) => {
-    const who = account();
-    return { who, ...(await sponsored(who, transaction({ owner: who.address, actions: actions(who.address), nonce: 0n, chainPath: RIPOSTE }), fund, at)) };
-  };
+  /** A write of `actions(address)` by `who` (a new reader unless given) at `n`, co-signed by the sponsor at `at` naming `fund`: asked for, not sent. */
+  const asked = async (at, fund, actions, who = account(), n = 0n) => ({ who, ...(await sponsored(who, transaction({ owner: who.address, actions: actions(who.address), nonce: n, chainPath: RIPOSTE }), fund, at)) });
   const notFunded = (error) => error.status === 402 && /notFunded/.test(error.message);
 
   // The blog's fund pays only for the blog's keys: not a write on another site, nor one with a single key off the blog.
@@ -652,19 +639,42 @@ try {
   await asked(sponsorURL, shop.fund, onShop);
   assert.deepEqual(await fundState(shop.fund), { deposit: SMALL, held: SMALL });
   console.log(`  ${shopReaders.length} readers fill the shop's ${SMALL}-coin fund; the next is sponsored on the sponsor's own float, the fund held at ${SMALL} of ${SMALL}`);
-  await fill(strictURL);
+  const strictReaders = await fill(strictURL);
   await assert.rejects(asked(strictURL, shop.fund, onShop), notFunded);
   assert.deepEqual(await fundState(shop.fund, strictURL), { deposit: SMALL, held: SMALL });
   console.log("  a funded-only sponsor, the shop's fund full, refuses the next reader (402 notFunded)");
+  // One hold per reader: a second comment, at the next nonce, while the first is held.
+  await assert.rejects(asked(strictURL, shop.fund, onShop, strictReaders[0].who, 1n), (error) => error.status === 409 && /inFlight/.test(error.message));
+  console.log("  a funded-only sponsor refuses a reader's second comment while their first is held (409 inFlight)");
 
-  // Sponsorship works after the restart: a held comment lands.
+  // Both sponsors restart with the same arguments. Deposits, claims and holds are on disk.
+  const shopHeld = [await fundState(shop.fund), await fundState(shop.fund, strictURL)];
+  const restart = async (child, args) => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill();
+      await once(child, "exit");
+    }
+    return spawn(sponsorBinary, args, { stdio: ["ignore", log, log] });
+  };
+  sponsorChild = await restart(sponsorChild, [...sponsorArgs, ...storage, "--port", String(sponsorPort)]);
+  strictChild = await restart(strictChild, strictArgs);
+  await until("the sponsor prices Riposte again", async () => (await ask("work", { chain: RIPOSTE.join("/") }), true), 120);
+  await until("the sponsor prices Moniker again", async () => (await ask("work", { chain: MONIKER.join("/") }), true), 120);
+  await until("the funded-only sponsor prices Riposte again", async () => (await ask("work", { chain: RIPOSTE.join("/") }, strictURL), true), 120);
+  assert.equal((await fundState(page.fund)).deposit, DEPOSIT, "the blog's deposit survives a restart");
+  assert.deepEqual([await fundState(shop.fund), await fundState(shop.fund, strictURL)], shopHeld, "the shop's deposit and holds survive a restart");
+  await assert.rejects(pay(blog.privateKey), (error) => error.status === 409 && /alreadyCredited/.test(error.message));
+  console.log(`  the sponsors restarted: the deposits and the shop's holds (${SMALL} of ${SMALL}) stand, and the blog's claimed deposit is refused again (409 alreadyCredited)`);
+
+  // Sponsorship works after the restart: a held comment lands, and its hold ends within a block or two.
   {
     const { who, body, signatures } = shopReaders[0];
     const { publicKey, signature } = sdk.signTransactionBody(body, who.privateKey);
     const result = await submit({ ...signatures, [publicKey]: signature }, body);
     assert.ok(result.ok, `the shop's first reader's comment: ${result.status} ${result.text}`);
     await until("the shop's first reader's comment lands", async () => (await shop.comments()).length === 1);
-    console.log("  admitted: a reader's comment co-signed by the restarted sponsor, held against the shop's fund");
+    await until("the shop's fund releases the landed comment", async () => (await fundState(shop.fund)).held < SMALL, 60);
+    console.log(`  admitted: a reader's comment held against the shop's fund before the restart; it lands and the fund holds ${(await fundState(shop.fund)).held} of ${SMALL}`);
   }
 
   // ------------------------------------------------------------ names and photos from Moniker

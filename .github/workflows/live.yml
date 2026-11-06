@@ -21,7 +21,7 @@ env:
 jobs:
   comment:
     name: A comment on testnet, sponsored, landed and read from ams
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
@@ -32,7 +32,7 @@ jobs:
 
   pages:
     name: The Pages site shows the guestbook
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5

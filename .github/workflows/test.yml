@@ -28,7 +28,7 @@ env:
 jobs:
   policy:
     name: Policy, records and the widget's helpers
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -57,7 +57,7 @@ jobs:
   engine:
     name: The node's engine agrees
     needs: policy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: swift:6.1-jammy
     timeout-minutes: 60
     steps:
@@ -82,7 +82,7 @@ jobs:
 
   node:
     name: Build the Lattice node and fee sponsor
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: swift:6.1-jammy
     timeout-minutes: 120
     steps:
@@ -129,7 +129,7 @@ jobs:
   e2e:
     name: ${{ matrix.suite == 'ui' && 'Browser' || 'End to end' }}
     needs: node
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false

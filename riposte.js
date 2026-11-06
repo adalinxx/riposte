@@ -85,8 +85,7 @@ li.c.tipped > .body { border-left: 3px solid var(--accent); border-radius: 8px; 
 .tipper .amount[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 650; }
 .tipper button.post { margin-left: 0; padding: 3px 12px; }
 .tipper .note { flex-basis: 100%; margin: 2px 0 0; }
-.pending { opacity: .7; }
-.pending .meta::after { content: attr(data-state); font-style: italic; }
+.pending .meta[data-state]::after { content: attr(data-state); font-style: italic; color: #c2410c; }
 .gone > .body .text, .hidden-note { color: var(--muted); font-style: italic; }
 .hidden-note { font-size: .88em; margin: 0 0 14px; }
 .marked { opacity: .5; }
@@ -187,6 +186,10 @@ async function mount(element) {
   const PENDING = `riposte.pending.${chain.join("/")}.${page.key}`;
   // The account's last write, until it lands: a host takes one at a time.
   const INFLIGHT = `riposte.inflight.${chain.join("/")}`;
+  // Likes, tips, deletes and marks shown before they land, kept across a reload.
+  const SHOWN = `riposte.shown.${chain.join("/")}.${page.key}`;
+  const kept = store.get(SHOWN, null);
+  const early = kept && Date.now() - kept.at < STALE ? kept : {};
   const state = {
     me: await wallet.address().catch(() => null),
     comments: null, // null while loading
@@ -195,11 +198,16 @@ async function mount(element) {
     tipFor: null, // "author/id" of the open Tip control
     tipAmount: TIP_AMOUNTS[0],
     balance: null, // the reader's coins, read when the Tip control opens
-    tipping: new Map(), // "author/id" → the total that shows a sent tip landed
+    tipping: new Map(early.tipping?.map(([key, total]) => [key, BigInt(total)])), // "author/id" → the total that shows a sent tip landed
     error: null,
     // Comments sent from here and not yet read back; after STALE they offer Retry.
     pending: store.get(PENDING, []).filter((p) => Date.now() - p.sentAt < 86_400_000),
-    likes: new Map(), // "author/id" → true|false while a like is saving
+    // What the reader just did, shown as done until the chain agrees.
+    likes: new Map(early.likes), // "author/id" → true|false while a like is saving
+    deleting: new Map(early.deleting), // "author/id" → true while the reader's delete is saving
+    hiding: new Map(early.hiding), // "author/id" → true|false while a moderator's hide is saving
+    blocking: new Map(early.blocking), // account → true|false while a moderator's block is saving
+    muting: new Map(early.muting), // account → true|false while the reader's mute is saving
     sort: store.get("riposte.sort", "oldest"),
     shown: PAGE_SIZE,
     replyTo: null, // "author/id" of the open reply box
@@ -210,7 +218,15 @@ async function mount(element) {
     busy: false,
   };
   const keyOf = (c) => `${c.author}/${c.id}`;
+  const SHOWN_KINDS = ["likes", "tipping", "deleting", "hiding", "blocking", "muting"];
+  function keepShown() {
+    const now = Object.fromEntries(SHOWN_KINDS.map((kind) => [kind, [...state[kind]].map(([k, v]) => [k, typeof v === "bigint" ? String(v) : v])]));
+    store.set(SHOWN, SHOWN_KINDS.some((kind) => state[kind].size) ? { ...now, at: Date.now() } : undefined);
+  }
   const isMod = () => state.me !== null && moderators.includes(state.me);
+  const isHidden = (key) => state.hiding.get(key) ?? state.hidden.comments.has(key);
+  const isBlocked = (account) => state.blocking.get(account) ?? state.hidden.accounts.has(account);
+  const isMuted = (account) => state.muting.get(account) ?? state.muted.has(account);
 
   async function load() {
     try {
@@ -228,6 +244,11 @@ async function mount(element) {
         if (c && c.likes.includes(state.me) === on) state.likes.delete(key);
       }
       for (const [key, total] of state.tipping) if ((comments.find((x) => keyOf(x) === key)?.tips.total ?? 0n) >= total) state.tipping.delete(key);
+      for (const key of state.deleting.keys()) if (!comments.some((x) => keyOf(x) === key)) state.deleting.delete(key);
+      for (const [key, on] of state.hiding) if (hidden.comments.has(key) === on) state.hiding.delete(key);
+      for (const [account, on] of state.blocking) if (hidden.accounts.has(account) === on) state.blocking.delete(account);
+      for (const [account, on] of state.muting) if (muted.has(account) === on) state.muting.delete(account);
+      keepShown();
       lookUp([...comments.map((c) => c.author), ...(me ? [me] : [])]);
     } catch (error) {
       state.error = error;
@@ -301,8 +322,8 @@ async function mount(element) {
       return `<li class="c gone"><div class="body"><span class="avatar"></span><p class="text">This comment was deleted.</p></div>${children(c, depth)}</li>`;
     }
     const key = keyOf(c);
-    const muted = state.muted.has(c.author);
-    const hiddenBy = state.hidden.comments.has(key) || state.hidden.accounts.has(c.author) || muted;
+    const muted = isMuted(c.author);
+    const hiddenBy = isHidden(key) || isBlocked(c.author) || muted;
     if (hiddenBy && (muted || !isMod()) && !state.reveal.has(key)) {
       return `<li class="c"><p class="hidden-note">${muted ? "You muted this author." : "Hidden by the site's moderators."} <button class="link" data-act="reveal" data-key="${key}">Show</button></p>${children(c, depth)}</li>`;
     }
@@ -311,8 +332,9 @@ async function mount(element) {
     const likes = c.likes.length + (saving === undefined ? 0 : saving && !c.likes.includes(state.me) ? 1 : !saving && c.likes.includes(state.me) ? -1 : 0);
     const mine = state.me === c.author;
     const stale = c.pending && (c.dropped || Date.now() - c.sentAt > STALE);
-    const tips = c.tips ?? { count: 0, total: 0n };
-    const tipSent = state.tipping.has(key);
+    const landedTips = c.tips ?? { count: 0, total: 0n };
+    // A tip just sent counts at once.
+    const tips = state.tipping.has(key) && state.tipping.get(key) > landedTips.total ? { count: landedTips.count + 1, total: state.tipping.get(key) } : landedTips;
     const acts = c.pending
       ? stale
         ? `<div class="acts"><button data-act="retry-send" data-key="${key}">Retry</button><button data-act="discard" data-key="${key}">Discard</button></div>`
@@ -320,17 +342,17 @@ async function mount(element) {
       : `<div class="acts">
           <button data-act="reply" data-key="${key}">Reply</button>
           <button data-act="like" data-key="${key}" aria-pressed="${liked}" aria-label="${liked ? "Unlike" : "Like"}">♥ ${likes || ""}</button>
-          ${mine ? "" : `<button data-act="tip" data-key="${key}" aria-expanded="${state.tipFor === key}">${tipSent ? "Tip sending…" : "Tip"}</button>`}
+          ${mine ? "" : `<button data-act="tip" data-key="${key}" aria-expanded="${state.tipFor === key}">Tip</button>`}
           ${tips.count ? `<span class="tipbadge">★ ${esc(tipsLabel(tips))}</span>` : ""}
           ${mine ? `<button data-act="delete" data-key="${key}">Delete</button>` : ""}
-          ${isMod() && !mine ? `<button data-act="hide" data-key="${key}">${state.hidden.comments.has(key) ? "Unhide" : "Hide"}</button><button data-act="block" data-key="${key}">${state.hidden.accounts.has(c.author) ? "Unblock author" : "Block author"}</button>` : ""}
+          ${isMod() && !mine ? `<button data-act="hide" data-key="${key}">${isHidden(key) ? "Unhide" : "Hide"}</button><button data-act="block" data-key="${key}">${isBlocked(c.author) ? "Unblock author" : "Block author"}</button>` : ""}
           ${state.me && !mine ? `<button data-act="mute" data-key="${key}">${muted ? "Unmute author" : "Mute author"}</button>` : ""}
         </div>
         ${state.tipFor === key ? tipper(key) : ""}`;
     return `<li class="c${c.pending ? " pending" : ""}${hiddenBy ? " marked" : ""}${tips.count ? " tipped" : ""}" id="c-${c.id}">
       <div class="body">
         ${authorAvatar(c)}
-        <div class="meta" ${c.pending ? `data-state="${stale ? (c.dropped ? "Not saved: it didn't go through" : "Not saved: it may not have gone through") : esc(c.pending)}"` : ""}>${nameOf(c)}${mine ? `<span class="you">you</span>` : ""}${c.answers && depth >= DEPTH ? `<span>↪ ${c.answers.missing ? "a deleted comment" : nameOf(c.answers)}</span>` : ""}${c.pending ? "" : `<a href="#c-${c.id}" title="${esc(new Date(c.at).toLocaleString())}" style="color:inherit;text-decoration:none">${esc(ago(c.at))}</a>`}${hiddenBy ? "<span>hidden</span>" : ""}</div>
+        <div class="meta" ${stale ? `data-state="${c.dropped ? "Not saved: it didn't go through" : "Not saved: it may not have gone through"}"` : ""}>${nameOf(c)}${mine ? `<span class="you">you</span>` : ""}${c.answers && depth >= DEPTH ? `<span>↪ ${c.answers.missing ? "a deleted comment" : nameOf(c.answers)}</span>` : ""}${c.pending ? (stale ? "" : `<span>${esc(ago(c.at))}</span>`) : `<a href="#c-${c.id}" title="${esc(new Date(c.at).toLocaleString())}" style="color:inherit;text-decoration:none">${esc(ago(c.at))}</a>`}${hiddenBy ? "<span>hidden</span>" : ""}</div>
         <div class="text">${renderText(c.text)}</div>
         ${acts}
       </div>
@@ -362,7 +384,7 @@ async function mount(element) {
   };
 
   function threads() {
-    const all = [...state.comments, ...state.pending.map((p) => ({ ...p, likes: [], pending: p.state ?? "Saving… this takes a few minutes" }))];
+    const all = [...state.comments.filter((c) => !state.deleting.has(keyOf(c))), ...state.pending.map((p) => ({ ...p, likes: [], pending: true }))];
     const top = records.tree(all);
     const score = (c) => (c.missing ? 0 : c.likes.length) + (c.replies?.length ?? 0) * 0.5;
     const time = (c) => (c.missing ? c.replies[0]?.id : c.id) ?? "";
@@ -374,7 +396,7 @@ async function mount(element) {
   function render() {
     // Keep what the person is typing across a redraw.
     const drafts = [...view.querySelectorAll("form.compose")].map((f) => [f.dataset.reply, f.text.value, f.contains(root.activeElement) ? root.activeElement.name : null]);
-    const total = state.comments ? state.comments.filter((c) => !c.missing).length + state.pending.length : 0;
+    const total = state.comments ? state.comments.filter((c) => !c.missing && !state.deleting.has(keyOf(c))).length + state.pending.length : 0;
     let body;
     if (state.comments === null) body = state.error ? `<p class="empty">Comments couldn't load: no host is answering. <button class="link" data-act="retry">Try again</button></p>` : `<p class="loading">Loading comments…</p>`;
     else {
@@ -422,8 +444,11 @@ async function mount(element) {
     return state.me;
   }
 
-  /** Sends one write through Selfhold, saying how it goes; true once it's sent. */
-  async function writing(run) {
+  /**
+   * Sends one write through Selfhold, saying how it goes; true once it's sent.
+   * `show` draws it as done once it can be sent, before Selfhold opens.
+   */
+  async function writing(run, show) {
     if (!state.me) return false;
     state.busy = true;
     try {
@@ -435,6 +460,7 @@ async function mount(element) {
       }
       if (last === "dropped") lost(state.inflight);
       settle(null);
+      show?.();
       say("Approve it in Selfhold…");
       const answer = await run({ wallet, account: state.me, progress: (text) => say(`${text}…`.replace(/[.…]+…$/, "…")) });
       const sent = answer?.sent ?? answer;
@@ -467,7 +493,8 @@ async function mount(element) {
     let carried = false;
     for (const p of state.pending) if (p.cid === sent.cid) carried = p.dropped = true;
     store.set(PENDING, state.pending.length ? state.pending : undefined);
-    state.likes.clear();
+    for (const kind of SHOWN_KINDS) state[kind].clear();
+    keepShown();
     return carried;
   }
   let watching = null;
@@ -516,18 +543,28 @@ async function mount(element) {
       return say(error.message, true);
     }
     const id = draft.id;
-    const ok = await writing(async (how) => {
-      return page.comment({ id, text, ...(reply && { reply: refOf(reply) }) }, how);
-    });
-    if (!ok) return;
-    // Shown at once, as saving, until it is in a block.
+    // Shown at once, as posted, while Selfhold sends it and until it is in a block.
     const value = records.parseComment(draft.actions[0].newValue);
-    state.pending.push({ author: state.me, id: draft.id, at: Date.now(), ...value, sentAt: Date.now(), cid: state.inflight?.cid });
+    const shown = { author: state.me, id, at: Date.now(), ...value, sentAt: Date.now() };
+    const show = () => {
+      state.pending.push(shown);
+      form.text.value = "";
+      if (reply) state.replyTo = null;
+      render();
+    };
+    const ok = await writing((how) => page.comment({ id, text, ...(reply && { reply: refOf(reply) }) }, how), show);
+    if (!ok && state.pending.includes(shown)) {
+      // Not sent: it comes off the thread, and its text goes back in the box.
+      state.pending = state.pending.filter((p) => p !== shown);
+      if (reply) state.replyTo = reply;
+      render();
+      const box = view.querySelector(`form.compose[data-reply="${reply ?? ""}"]`);
+      if (box) box.text.value = text;
+    }
+    if (!ok) return;
+    shown.sentAt = Date.now();
+    shown.cid = state.inflight?.cid;
     store.set(PENDING, state.pending);
-    if (reply) state.replyTo = null;
-    const box = view.querySelector(`form.compose[data-reply="${reply ?? ""}"]`);
-    if (box) box.text.value = "";
-    render();
     watch(() => state.pending.length === 0, { stuck: null });
   }
 
@@ -606,46 +643,49 @@ async function mount(element) {
     if (act === "tip-send") {
       const amount = state.tipAmount;
       if (!tipCheck(amount, state.balance).ok) return;
-      const total = (find(key)?.tips.total ?? 0n) + BigInt(amount);
-      if (await writing((how) => page.tip(to, amount, how))) {
-        state.tipFor = null;
-        state.tipping.set(key, total);
-        say(`Tipping ${count(amount, "coin")}… this takes a few minutes.`);
-        watch(() => !state.tipping.has(key) && (say(""), true));
-      } else if (state.tipFor === key) {
-        // Refused for want of coins, maybe: the control shows the balance as it is now.
+      const total = (state.tipping.get(key) ?? find(key)?.tips.total ?? 0n) + BigInt(amount);
+      state.tipFor = null;
+      if (!(await atOnce(state.tipping, key, total, (how) => page.tip(to, amount, how)))) {
+        // Refused for want of coins, maybe: the control opens again on the balance as it is now.
+        state.tipFor = key;
         state.balance = await riposte.balance(state.me).catch(() => state.balance);
         render();
       }
       return;
     }
     if (act === "mute") {
-      const on = !state.muted.has(to.author);
-      if (await writing((how) => page.mute(to.author, how, on))) watch(() => state.muted.has(to.author) === on);
-      return;
+      const on = !isMuted(to.author);
+      return atOnce(state.muting, to.author, on, (how) => page.mute(to.author, how, on));
     }
     if (act === "like") {
       const on = !(state.likes.get(key) ?? find(key)?.likes.includes(state.me));
-      state.likes.set(key, on);
-      render();
-      if (await writing((how) => page.like(to, how, on))) watch(() => !state.likes.has(key));
-      else (state.likes.delete(key), render());
+      return atOnce(state.likes, key, on, (how) => page.like(to, how, on));
     }
-    if (act === "delete") {
-      if (await writing((how) => page.remove(to.id, how))) {
-        say("Deleting… this takes a few minutes.");
-        watch(() => !find(key));
-      }
-    }
+    if (act === "delete") return atOnce(state.deleting, key, true, (how) => page.remove(to.id, how));
     if (act === "hide") {
-      const on = !state.hidden.comments.has(key);
-      if (await writing((how) => page.hide(to, how, on))) watch(() => state.hidden.comments.has(key) === on);
+      const on = !isHidden(key);
+      return atOnce(state.hiding, key, on, (how) => page.hide(to, how, on));
     }
     if (act === "block") {
-      const on = !state.hidden.accounts.has(to.author);
-      if (await writing((how) => page.block(to.author, how, on))) watch(() => state.hidden.accounts.has(to.author) === on);
+      const on = !isBlocked(to.author);
+      return atOnce(state.blocking, to.author, on, (how) => page.block(to.author, how, on));
     }
   });
+
+  /**
+   * Shows a change as done at once (`shown` maps `key` → `value` until a
+   * read of the chain agrees), then sends it. Not sent, it comes back off;
+   * true once sent.
+   */
+  async function atOnce(shown, key, value, run) {
+    const had = shown.has(key);
+    const before = shown.get(key);
+    let drawn = false;
+    const show = () => ((drawn = true), shown.set(key, value), keepShown(), render());
+    if (await writing(run, show)) return (watch(() => !shown.has(key)), true);
+    if (drawn) (had ? shown.set(key, before) : shown.delete(key), keepShown(), render());
+    return false;
+  }
 
   render();
   await load();

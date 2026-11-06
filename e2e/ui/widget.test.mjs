@@ -1,8 +1,8 @@
 // The widget on a blog page, through Selfhold's window, against a private
 // stack (../riposte.mjs, run with E2E_KEEP so it stays up and serves this
 // repository). A reader who holds no coins writes a comment: the first Post
-// signs them in with a passkey, the second sends it, and it shows as saving
-// until it lands. They reply, like and delete. Then the blog names them as
+// signs them in with a passkey, the second sends it, and it shows at once,
+// before it lands. They reply, like and delete, each shown at once too. Then the blog names them as
 // its moderator: they hide a comment, and a second reader sees it hidden.
 // With no coins the Tip control says so and sends nothing; given coins, they
 // tip a comment from their balance and it is highlighted. The discuss page
@@ -141,6 +141,9 @@ const until = async (label, condition, seconds) => {
     await new Promise((r) => setTimeout(r, 250));
   }
 };
+/** Waits until the chain agrees with every change the widget showed before it landed. */
+const landed = () =>
+  until("the changes shown land", async () => (await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("riposte.shown.")).length)) === 0, 180);
 
 /** Presses `button`, then waits for Selfhold's window to show that request. */
 async function inSelfhold(button) {
@@ -221,7 +224,8 @@ test("a reply, a like, and a deletion", async () => {
   const like = grace.locator(".acts").first().getByRole("button", { name: "Like" });
   await approve(like);
   await expect(grace.locator(".acts").first().getByRole("button", { name: "Unlike" })).toHaveAttribute("aria-pressed", "true");
-  // It holds once read back from the chain, after a reload.
+  // It shows at once, and holds once read back from the chain, after a reload.
+  await landed();
   await expect(async () => {
     await page.reload();
     await expect(comment("Does this work with Hugo?").locator(".acts").first().getByRole("button", { name: "Unlike" })).toContainText("1", { timeout: 5000 });
@@ -231,6 +235,7 @@ test("a reply, a like, and a deletion", async () => {
   await approve(comment("adding it to my footer").getByRole("button", { name: "Delete" }));
   await expect(comment("adding it to my footer")).toHaveCount(0);
   await expect(widget().locator("h2")).toHaveText("6 comments");
+  await landed();
 });
 
 test("the blog's moderator hides a comment; another reader sees it folded", async () => {
@@ -244,6 +249,7 @@ test("the blog's moderator hides a comment; another reader sees it folded", asyn
   await approve(ada.getByRole("button", { name: "Hide" }));
   await expect(ada).toHaveClass(/marked/);
   await expect(ada.getByRole("button", { name: "Unhide" })).toBeVisible();
+  await landed();
 
   // A reader in another browser, not signed in, sees it folded and can open it.
   const other = await browser.newPage();
@@ -300,6 +306,7 @@ test("a tip: refused without coins, then paid from the balance and highlighted",
   assert.ok(sent.fund.every((prefix) => /^(comment|like|tip)\/[a-z2-7]{16}$/.test(prefix)), sent.fund.join());
   await expect(grace).toHaveClass(/tipped/);
   await expect(grace.locator(".tipbadge").first()).toHaveText("★ Tipped 5 coins");
+  await landed();
   assert.equal(await balance(reader), 7n, "the tip came from the reader's balance; the sponsor paid the fee");
   assert.equal(await balance(keep.mod), authorBefore + 5n, "the author was paid");
 
@@ -343,7 +350,8 @@ test("the discuss page shows a post's thread from its address, and a reader mute
   const BOB = "No sign-up and no captcha either";
   const mutedNotes = () => widget().locator(".hidden-note").filter({ hasText: "You muted this author." });
   await approve(comment(BOB).getByRole("button", { name: "Mute author" }));
-  await expect(mutedNotes()).toHaveCount(3, { timeout: 180_000 });
+  await expect(mutedNotes()).toHaveCount(3);
+  await landed();
   await expect(widget()).not.toContainText(BOB);
   await expect(widget()).not.toContainText("BUY CHEAP WATCHES");
   // For this reader everywhere: the post folds Bob for them too.
@@ -362,9 +370,9 @@ test("the discuss page shows a post's thread from its address, and a reader mute
   await expect(mutedNotes()).toHaveCount(3);
   while ((await mutedNotes().count()) > 0) await mutedNotes().first().getByRole("button", { name: "Show" }).click();
   await approve(comment(BOB).getByRole("button", { name: "Unmute author" }));
-  // Landed once the chain no longer has the mark.
-  await expect(comment(BOB).getByRole("button", { name: "Mute author" })).toBeVisible({ timeout: 180_000 });
+  await expect(comment(BOB).getByRole("button", { name: "Mute author" })).toBeVisible();
   await expect(comment(BOB)).not.toHaveClass(/marked/);
+  await landed();
 
   // A pasted address that isn't a web page's is refused, not linked.
   await page.goto(`${keep.home}discuss/?url=${encodeURIComponent("javascript:alert(1)")}`);

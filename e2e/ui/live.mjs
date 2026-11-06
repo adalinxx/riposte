@@ -5,7 +5,7 @@
 //   node e2e/ui/live.mjs
 import { chromium, expect as baseExpect } from "@playwright/test";
 
-const SITE = "https://adalinxx.github.io/riposte/";
+const SITE = "https://riposte.page/";
 const expect = baseExpect.configure({ timeout: 120_000 });
 
 const browser = await chromium.launch();

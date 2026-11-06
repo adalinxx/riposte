@@ -5,11 +5,11 @@ Disqus or giscus replacement that is one script tag.
 
 ```html
 <div id="riposte"></div>
-<script type="module" src="https://adalinxx.github.io/riposte/riposte.js"></script>
+<script type="module" src="https://riposte.page/riposte.js"></script>
 ```
 
-**Try it:** https://adalinxx.github.io/riposte/ (a guestbook) and
-https://adalinxx.github.io/riposte/demo/ (a blog post). Both run on testnet.
+**Try it:** https://riposte.page/ (a guestbook) and
+https://riposte.page/demo/ (a blog post). Both run on testnet.
 
 - **No account wall.** A reader's first comment makes a passkey in
   [Selfhold](https://wallet.selfhold.app/). There's no email, password or

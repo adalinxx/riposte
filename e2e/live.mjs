@@ -4,7 +4,8 @@
 // a test page, sends it to iad, waits for it to land, and reads it back from
 // ams. Then it reads a known account's Moniker card and photo from ams, as
 // the widget shows an author. Each step that fails says which, and how long
-// it was given.
+// it was given. It first logs the sponsor's coins on the chain and the site's
+// fund at the sponsor: a measurement over the day, never a failure.
 //
 //   node e2e/live.mjs
 //
@@ -119,6 +120,22 @@ const page = await r.pageKey(SITE, PAGE);
 const text = `Live check ${new Date().toISOString()}`;
 const write = r.comment(page, me.address, { text, name: "live check" });
 log(`reader ${me.address}, comment ${write.id} on ${PAGE}`);
+
+// Whether readers' work repays the fees: the sponsor's coins on the chain, and what the site's fund backs.
+try {
+  const get = async (url) => {
+    const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    return response.json();
+  };
+  const { fundTo } = await get(`${SPONSOR}/terms`);
+  const { balance } = await get(`${NODE}/api/state/account/${fundTo}?chainPath=${CHAIN.join("/")}`);
+  const prefixes = r.fundPrefixes(r.siteOf(page)).map((p) => `prefix=${encodeURIComponent(p)}`).join("&");
+  const { deposit, held } = await get(`${SPONSOR}/fund?chain=${CHAIN.join("/")}&${prefixes}`);
+  log(`sponsor ${fundTo} holds ${balance} on ${CHAIN.join("/")}; ${SITE}'s fund: ${JSON.stringify({ deposit, held })}`);
+} catch (error) {
+  log(`sponsor balance and fund unread: ${error.message}`);
+}
 
 step("1. the sponsor prices and co-signs the comment");
 const { body, signatures } = await sponsored(transaction({ owner: me.address, actions: write.actions, nonce: 0n, chainPath: CHAIN }), r.fundPrefixes(r.siteOf(page)));

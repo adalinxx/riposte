@@ -19,7 +19,7 @@ env:
   LATTICE_NODE_REPO: 0xLattice/lattice-node
   LATTICE_NODE_REF: 6237c0e7d436e0c9a8cf97b88da944f197788ccd
   LATTICE_SPONSOR_REPO: 0xLattice/lattice-sponsor
-  LATTICE_SPONSOR_REF: 406d60b169bfa085f1d7e4b8d86df8388d205e8d
+  LATTICE_SPONSOR_REF: 17f5e4d25193ae65cb606eb85e816250dd5044ec
   LATTICE_WALLET_REPO: adalinxx/selfhold-wallet
   LATTICE_WALLET_REF: 410040a8cafabaf895d279468638c922d07bb630 # fund and coinOnly (selfhold-wallet#51)
   MONIKER_REPO: adalinxx/moniker

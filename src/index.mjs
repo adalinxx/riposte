@@ -10,12 +10,13 @@
 // Writes carry no fee: the wallet sets it, and Selfhold's window pays it in
 // this device's work through a fee sponsor, so nobody needs coins to comment.
 import * as records from "./records.mjs";
-import { anyHost, tip, view, volumeLoader } from "./state.mjs";
+import { tip, view, volumeLoader } from "./state.mjs";
 import { writeRequest } from "./wallet.mjs";
 
-/** Where Riposte lives now: its testnet trial chain on the shared app hosts. */
+/** Where Riposte lives now: its testnet trial chain, found from the shared app hosts. */
 export const DEFAULTS = {
   chain: ["Nexus", "testnet", "riposte-1fab4d"],
+  // Start nodes: the chain is read from those that serve it, else from the hosts its directory declares.
   nodes: ["https://lattice-testnet-apps-iad.fly.dev", "https://lattice-testnet-apps-ams.fly.dev"],
   // How long a read state is reused before asking for the tip again.
   freshFor: 10_000,
@@ -24,21 +25,28 @@ export const DEFAULTS = {
 export function createRiposte(options) {
   const { sdk, chain, nodes, freshFor } = { ...DEFAULTS, ...options };
   if (!sdk) throw new Error("createRiposte needs { sdk }: the Lattice SDK module");
-  const volumes = new sdk.VolumeClient(anyHost(nodes.map((node) => new sdk.HTTPVolumeTransport(`${node}/volumes`, { chainPath: chain }))));
-  const load = volumeLoader(volumes, sdk.decodeDagCbor);
+  // The nodes serving the chain, in turn (the SDK's ChainNodes): those of
+  // `nodes` that serve it, then the hosts its directory declares.
+  const finder = new sdk.ChainNodes(nodes);
+  const hosts = new Map(); // node URL → { volumes, load }
+  /** A node's Volumes, checked by CID, and a loader over them. */
+  const on = (url) => {
+    if (!hosts.has(url)) {
+      const volumes = new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${url}/volumes`, { chainPath: chain }));
+      hosts.set(url, { volumes, load: volumeLoader(volumes, sdk.decodeDagCbor) });
+    }
+    return hosts.get(url);
+  };
 
   let current = null; // { at, state: Promise }
   /** The chain's state at the tip of the first node that answers, reused for `freshFor` ms. */
   function state({ fresh = false } = {}) {
     if (!fresh && current && Date.now() - current.at < freshFor) return current.state;
-    const read = (async () => {
-      try {
-        const { generalStateCID } = await Promise.any(nodes.map((node) => tip(sdk, node, chain, volumes)));
-        return view(load, generalStateCID);
-      } catch (error) {
-        throw new Error(`No node is serving ${chain.join("/")}`, { cause: error.errors?.[0] ?? error });
-      }
-    })();
+    const read = finder.read(chain, async ({ url }) => {
+      const { volumes, load } = on(url);
+      const { generalStateCID } = await tip(sdk, url, chain, volumes);
+      return view(load, generalStateCID);
+    });
     current = { at: Date.now(), state: read };
     read.catch(() => current?.state === read && (current = null));
     return read;
@@ -67,11 +75,7 @@ export function createRiposte(options) {
       if (!response.ok) throw new Error(`account: HTTP ${response.status}`);
       return BigInt((await response.json()).balance ?? 0);
     };
-    try {
-      return await Promise.any(nodes.map(read));
-    } catch (error) {
-      throw new Error(`No node is serving ${chain.join("/")}`, { cause: error.errors?.[0] ?? error });
-    }
+    return finder.read(chain, ({ url }) => read(url));
   }
 
   /**

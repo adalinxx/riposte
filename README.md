@@ -143,8 +143,9 @@ the current page.
   built module.
 - `index.html`: the landing page. `demo/` is a blog post with the widget.
   `discuss/` shows any address's thread.
-- `vendor/`: the Lattice SDK bundled for browsers, Selfhold's client, and
-  moniker-sdk's reader (`vendor/moniker/`).
+- `vendor/`: the Lattice SDK bundled for browsers (lattice-sdk 382bf8c, by
+  `esbuild@0.24.2 packages/sdk/src/index.ts --bundle --format=esm --minify`),
+  Selfhold's client, and moniker-sdk's reader (`vendor/moniker/`).
 
 ## Test
 

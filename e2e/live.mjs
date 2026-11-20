@@ -29,8 +29,8 @@ const PAGE = "adalinxx.github.io/riposte/live-check";
 const UNPRICEABLE_MINUTES = 5;
 const LAND_MINUTES = 20;
 const SECOND_MINUTES = 5;
-// An account with a card and photo on Moniker (Nexus/moniker), set in a live trial.
-const KNOWN = "bafyreihpcfcqbxecznct6ryuqfo3xbn6sakrwfos55empvx7gxec75ywyu";
+// An account with a card and photo on Moniker (Nexus/moniker), set in a live trial on 2026-11-20.
+const KNOWN = "bafyreidczyedzwvn7po3xxfjm4ejb75hcye7jnkn3aszf4kdqraazkdixi";
 
 const started = Date.now();
 let stepStarted = started;

@@ -20,7 +20,7 @@ import { authorName } from "../widget/author.mjs";
 
 const NODE = "https://lattice-testnet-apps-iad.fly.dev";
 const SPONSOR = "https://lattice-testnet-apps-iad.fly.dev:8650/sponsor";
-const SECOND = "https://lattice-testnet-apps-ams.fly.dev";
+const SECOND = "https://ams.testnet.lattice.build";
 const CHAIN = ["Nexus", "testnet", "riposte-1fab4d"];
 const SITE = "adalinxx.github.io";
 const PAGE = "adalinxx.github.io/riposte/live-check";
